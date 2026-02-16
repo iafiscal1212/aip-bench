@@ -1,0 +1,53 @@
+{
+  "model": "distilgpt2",
+  "data_source": "huggingface",
+  "results": {
+    "halueval_real": {
+      "name": "halueval",
+      "metrics": {
+        "auroc": 0.7882093884496046,
+        "f1": 0.7669902912621359,
+        "precision": 0.7247706422018348,
+        "recall": 0.8144329896907216,
+        "optimal_threshold": 0.45427298376663494
+      },
+      "metadata": {
+        "n_samples": 200,
+        "n_positive": 97,
+        "n_negative": 103
+      }
+    },
+    "squad_v2_real": {
+      "name": "qa_compression",
+      "metrics": {
+        "em_full": 1.0,
+        "em_compressed": 0.6888888888888889,
+        "f1_full": 1.0,
+        "f1_compressed": 0.9166137566137564,
+        "quality_retention": 0.9166137566137564,
+        "mean_cosine_similarity": 0.7650695554477529
+      },
+      "metadata": {
+        "n_samples": 45,
+        "compress_method": "evict",
+        "recent_window": 64
+      }
+    },
+    "hotpotqa_real": {
+      "name": "qa_compression",
+      "metrics": {
+        "em_full": 1.0,
+        "em_compressed": 0.4125,
+        "f1_full": 1.0,
+        "f1_compressed": 0.8596478174603174,
+        "quality_retention": 0.8596478174603174,
+        "mean_cosine_similarity": 0.6354472467761414
+      },
+      "metadata": {
+        "n_samples": 80,
+        "compress_method": "evict",
+        "recent_window": 64
+      }
+    }
+  }
+}

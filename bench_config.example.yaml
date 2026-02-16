@@ -1,0 +1,27 @@
+# AIP Bench — Example configuration
+# Copy to bench_config.yaml and customize
+
+suite: "full_eval"
+model: "dummy"            # dummy, hf:distilgpt2, openai:gpt-4o, anthropic:claude-sonnet-4-5-20250929
+shots: 0                  # Number of few-shot examples
+
+tasks:
+  - halueval
+  - ockbench
+  - qa_compression
+  - mmlu
+  - gsm8k
+  - fever
+
+# Optional: compare multiple configurations
+# configs:
+#   baseline:
+#     prune_ratio: 0.0
+#   optimized:
+#     prune_ratio: 0.25
+#   aggressive:
+#     prune_ratio: 0.50
+
+output:
+  format: html            # json, csv, html
+  path: results/report.html

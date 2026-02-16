@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aip-bench"
+version = "0.1.0"
+description = "Benchmarking suite for LLM hallucination detection, inference efficiency, and QA compression evaluation"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Carmen Esteban"},
+]
+keywords = [
+    "benchmarking", "evaluation", "llm", "hallucination-detection",
+    "kv-cache-compression", "attention-analysis", "halueval", "ockbench",
+    "inference-optimization", "qa-evaluation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+bench = ["datasets>=2.14"]
+bench-full = ["datasets>=2.14", "torch>=1.9", "transformers>=4.30"]
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.18"]
+viz = ["matplotlib>=3.5"]
+config = ["pyyaml>=6.0"]
+progress = ["tqdm>=4.60"]
+all = ["datasets>=2.14", "torch>=1.9", "transformers>=4.30", "openai>=1.0", "anthropic>=0.18", "matplotlib>=3.5", "pyyaml>=6.0", "tqdm>=4.60"]
+
+[project.scripts]
+aip-bench = "aip_bench.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/iafiscal1212/aip-bench"
+Repository = "https://github.com/iafiscal1212/aip-bench"
+Issues = "https://github.com/iafiscal1212/aip-bench/issues"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that require torch+transformers (deselect with '-m \"not slow\"')",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aip_bench", "aip_bench.*"]

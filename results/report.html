@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html><head>
+<title>AIP Bench — distilgpt2 Results</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:960px;margin:2em auto;padding:0 1em;background:#fafafa}
+h1{color:#1a1a2e;border-bottom:3px solid #0f3460;padding-bottom:.5em}
+h2{color:#16213e;margin-top:2em}
+h3{color:#0f3460}
+table{border-collapse:collapse;width:100%;margin:1em 0;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+th,td{border:1px solid #ddd;padding:10px 14px;text-align:left}
+th{background:#0f3460;color:#fff}
+tr:nth-child(even){background:#f2f2f2}
+tr:hover{background:#e0e7ff}
+.meta{color:#6b7280;font-size:.9em}
+.good{color:#059669;font-weight:bold}
+.bad{color:#dc2626}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.8em;font-weight:bold}
+.badge-synth{background:#dbeafe;color:#1d4ed8}
+.badge-real{background:#dcfce7;color:#166534}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1em;margin:1em 0}
+.card{background:#fff;padding:1em;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);text-align:center}
+.card h4{margin:0 0 .5em;color:#374151}
+.card .val{font-size:1.8em;font-weight:bold;color:#0f3460}
+</style>
+</head><body>
+<h1>AIP Bench — Benchmark Results</h1>
+<p class="meta">Model: <b>distilgpt2</b> | 7 benchmarks | Synthetic + HuggingFace datasets</p>
+<h2>Summary</h2>
+<div class="summary-grid">
+<div class="card"><h4>MMLU</h4><div class="val">22%</div><div class="meta">Accuracy</div></div>
+<div class="card"><h4>HaluEval</h4><div class="val">1.00</div><div class="meta">AUROC</div></div>
+<div class="card"><h4>OckBench</h4><div class="val">66%</div><div class="meta">Efficiency</div></div>
+<div class="card"><h4>QA Compress</h4><div class="val">88%</div><div class="meta">Retention</div></div>
+<div class="card"><h4>GSM8K</h4><div class="val">0%</div><div class="meta">Accuracy</div></div>
+<div class="card"><h4>FEVER</h4><div class="val">30%</div><div class="meta">Accuracy</div></div>
+<div class="card"><h4>NQ</h4><div class="val">0.013</div><div class="meta">F1</div></div>
+</div>
+<h2>Knowledge & Reasoning</h2>
+<h3>mmlu <span class="badge badge-real">HuggingFace</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>accuracy</td><td>0.2200</td></tr>
+<tr><td>macro_f1</td><td class="bad">0.0902</td></tr>
+<tr><td>n_correct</td><td>11</td></tr>
+<tr><td>n_total</td><td>50</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_shots</td><td class="meta">0</td></tr>
+<tr><td class="meta">model</td><td class="meta">distilgpt2</td></tr>
+</table></details>
+<h3>gsm8k <span class="badge badge-real">HuggingFace</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>accuracy</td><td class="bad">0.0000</td></tr>
+<tr><td>n_correct</td><td>0</td></tr>
+<tr><td>n_total</td><td>50</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_shots</td><td class="meta">0</td></tr>
+<tr><td class="meta">model</td><td class="meta">distilgpt2</td></tr>
+</table></details>
+<h3>fever <span class="badge badge-real">HuggingFace</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>accuracy</td><td>0.3000</td></tr>
+<tr><td>macro_f1</td><td>0.1538</td></tr>
+<tr><td>n_correct</td><td>15</td></tr>
+<tr><td>n_total</td><td>50</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_shots</td><td class="meta">0</td></tr>
+<tr><td class="meta">model</td><td class="meta">distilgpt2</td></tr>
+</table></details>
+<h3>natural_questions <span class="badge badge-real">HuggingFace</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>exact_match</td><td class="bad">0.0000</td></tr>
+<tr><td>f1</td><td class="bad">0.0128</td></tr>
+<tr><td>n_total</td><td>50</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_shots</td><td class="meta">0</td></tr>
+<tr><td class="meta">model</td><td class="meta">distilgpt2</td></tr>
+</table></details>
+<h2>AIP Modules (Synthetic)</h2>
+<h3>halueval <span class="badge badge-synth">Synthetic</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>auroc</td><td class="good">1.0000</td></tr>
+<tr><td>f1</td><td class="good">1.0000</td></tr>
+<tr><td>precision</td><td class="good">1.0000</td></tr>
+<tr><td>recall</td><td class="good">1.0000</td></tr>
+<tr><td>optimal_threshold</td><td class="good">0.8484</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_samples</td><td class="meta">200</td></tr>
+<tr><td class="meta">n_positive</td><td class="meta">100</td></tr>
+<tr><td class="meta">n_negative</td><td class="meta">100</td></tr>
+</table></details>
+<h3>ockbench <span class="badge badge-synth">Synthetic</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>accuracy</td><td class="good">0.8500</td></tr>
+<tr><td>efficiency</td><td>0.6601</td></tr>
+<tr><td>tokens_saved</td><td class="good">795.2012</td></tr>
+<tr><td>savings_ratio</td><td>0.7766</td></tr>
+<tr><td>mean_effective_tokens</td><td class="good">228.7988</td></tr>
+<tr><td>mean_combined_savings</td><td>0.6250</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_problems</td><td class="meta">100</td></tr>
+<tr><td class="meta">prune_ratio</td><td class="meta">0.25</td></tr>
+<tr><td class="meta">compress_method</td><td class="meta">evict</td></tr>
+<tr><td class="meta">token_budget</td><td class="meta">1024</td></tr>
+</table></details>
+<h3>qa_compression <span class="badge badge-synth">Synthetic</span></h3>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>em_full</td><td class="good">1.0000</td></tr>
+<tr><td>em_compressed</td><td>0.4100</td></tr>
+<tr><td>f1_full</td><td class="good">1.0000</td></tr>
+<tr><td>f1_compressed</td><td class="good">0.8821</td></tr>
+<tr><td>quality_retention</td><td class="good">0.8821</td></tr>
+<tr><td>mean_cosine_similarity</td><td>0.7920</td></tr>
+</table>
+<details><summary class="meta">Metadata</summary><table>
+<tr><th>Key</th><th>Value</th></tr>
+<tr><td class="meta">n_samples</td><td class="meta">100</td></tr>
+<tr><td class="meta">compress_method</td><td class="meta">evict</td></tr>
+<tr><td class="meta">recent_window</td><td class="meta">64</td></tr>
+</table></details>
+<h2>Notes</h2>
+<ul>
+<li><b>distilgpt2</b> (82M params) is a small model — low scores on knowledge/math tasks are expected.</li>
+<li><b>HaluEval, OckBench, QA Compression</b> use synthetic data with structured KV caches (AR(1) + low-rank + positional encoding).</li>
+<li><b>Quality retention 88%</b> means KV compression preserves most answer quality.</li>
+<li><b>OckBench efficiency 66%</b> = 85% accuracy with 77.6% token savings.</li>
+</ul>
+<footer><p class="meta">Generated by AIP Bench v0.1.0 — Carmen Esteban</p></footer>
+</body></html>

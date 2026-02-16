@@ -1,0 +1,103 @@
+{
+  "model": "distilgpt2",
+  "results": {
+    "mmlu": {
+      "name": "mmlu",
+      "metrics": {
+        "accuracy": 0.22,
+        "macro_f1": 0.09016393442622951,
+        "n_correct": 11,
+        "n_total": 50
+      },
+      "metadata": {
+        "n_shots": 0,
+        "model": "distilgpt2"
+      }
+    },
+    "gsm8k": {
+      "name": "gsm8k",
+      "metrics": {
+        "accuracy": 0.0,
+        "n_correct": 0,
+        "n_total": 50
+      },
+      "metadata": {
+        "n_shots": 0,
+        "model": "distilgpt2"
+      }
+    },
+    "fever": {
+      "name": "fever",
+      "metrics": {
+        "accuracy": 0.3,
+        "macro_f1": 0.15384615384615383,
+        "n_correct": 15,
+        "n_total": 50
+      },
+      "metadata": {
+        "n_shots": 0,
+        "model": "distilgpt2"
+      }
+    },
+    "natural_questions": {
+      "name": "natural_questions",
+      "metrics": {
+        "exact_match": 0.0,
+        "f1": 0.01282051282051282,
+        "n_total": 50
+      },
+      "metadata": {
+        "n_shots": 0,
+        "model": "distilgpt2"
+      }
+    },
+    "halueval": {
+      "name": "halueval",
+      "metrics": {
+        "auroc": 1.0,
+        "f1": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "optimal_threshold": 0.8483644818406154
+      },
+      "metadata": {
+        "n_samples": 200,
+        "n_positive": 100,
+        "n_negative": 100
+      }
+    },
+    "ockbench": {
+      "name": "ockbench",
+      "metrics": {
+        "accuracy": 0.85,
+        "efficiency": 0.6600791625976562,
+        "tokens_saved": 795.20125,
+        "savings_ratio": 0.776563720703125,
+        "mean_effective_tokens": 228.79875,
+        "mean_combined_savings": 0.625
+      },
+      "metadata": {
+        "n_problems": 100,
+        "prune_ratio": 0.25,
+        "compress_method": "evict",
+        "token_budget": 1024
+      }
+    },
+    "qa_compression": {
+      "name": "qa_compression",
+      "metrics": {
+        "em_full": 1.0,
+        "em_compressed": 0.41,
+        "f1_full": 1.0,
+        "f1_compressed": 0.8821269841269842,
+        "quality_retention": 0.8821269841269842,
+        "mean_cosine_similarity": 0.7920013244146766
+      },
+      "metadata": {
+        "n_samples": 100,
+        "compress_method": "evict",
+        "recent_window": 64
+      }
+    }
+  }
+}

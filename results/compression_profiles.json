@@ -1,0 +1,455 @@
+{
+  "profiles": {
+    "conservative": {
+      "prune_ratio": 0.1,
+      "recent_window": 96,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656,
+      "savings_ratio": 0.7393243408203125,
+      "tokens_saved_pct": 73.93243408203125,
+      "quality_retention": 1.0,
+      "cosine_similarity": 0.9400800369754616,
+      "f1_compressed": 1.0
+    },
+    "balanced": {
+      "prune_ratio": 0.25,
+      "recent_window": 64,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562,
+      "savings_ratio": 0.776563720703125,
+      "tokens_saved_pct": 77.6563720703125,
+      "quality_retention": 0.8821269841269842,
+      "cosine_similarity": 0.7920013244146766,
+      "f1_compressed": 0.8821269841269842
+    },
+    "aggressive": {
+      "prune_ratio": 0.5,
+      "recent_window": 32,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374,
+      "savings_ratio": 0.85104248046875,
+      "tokens_saved_pct": 85.104248046875,
+      "quality_retention": 0.7688174603174603,
+      "cosine_similarity": 0.5764357310306119,
+      "f1_compressed": 0.7688174603174603
+    }
+  },
+  "sweep": [
+    {
+      "prune_ratio": 0.0,
+      "recent_window": 96,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.0,
+      "recent_window": 64,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.0,
+      "recent_window": 48,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.0,
+      "recent_window": 32,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.05,
+      "recent_window": 96,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.05,
+      "recent_window": 64,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.05,
+      "recent_window": 48,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.05,
+      "recent_window": 32,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.1,
+      "recent_window": 96,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.1,
+      "recent_window": 64,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.1,
+      "recent_window": 48,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.1,
+      "recent_window": 32,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.15000000000000002,
+      "recent_window": 96,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.15000000000000002,
+      "recent_window": 64,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.15000000000000002,
+      "recent_window": 48,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.15000000000000002,
+      "recent_window": 32,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.2,
+      "recent_window": 96,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.2,
+      "recent_window": 64,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.2,
+      "recent_window": 48,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.2,
+      "recent_window": 32,
+      "savings_pct": 73.93243408203125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6284256896972656
+    },
+    {
+      "prune_ratio": 0.25,
+      "recent_window": 96,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.25,
+      "recent_window": 64,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.25,
+      "recent_window": 48,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.25,
+      "recent_window": 32,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.30000000000000004,
+      "recent_window": 96,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.30000000000000004,
+      "recent_window": 64,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.30000000000000004,
+      "recent_window": 48,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.30000000000000004,
+      "recent_window": 32,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.35000000000000003,
+      "recent_window": 96,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.35000000000000003,
+      "recent_window": 64,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.35000000000000003,
+      "recent_window": 48,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.35000000000000003,
+      "recent_window": 32,
+      "savings_pct": 77.6563720703125,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6600791625976562
+    },
+    {
+      "prune_ratio": 0.4,
+      "recent_window": 96,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.4,
+      "recent_window": 64,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.4,
+      "recent_window": 48,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.4,
+      "recent_window": 32,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.45,
+      "recent_window": 96,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.45,
+      "recent_window": 64,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.45,
+      "recent_window": 48,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.45,
+      "recent_window": 32,
+      "savings_pct": 81.38031005859375,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.6917326354980469
+    },
+    {
+      "prune_ratio": 0.5,
+      "recent_window": 96,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.5,
+      "recent_window": 64,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.5,
+      "recent_window": 48,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.5,
+      "recent_window": 32,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.55,
+      "recent_window": 96,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.55,
+      "recent_window": 64,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.55,
+      "recent_window": 48,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.55,
+      "recent_window": 32,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.6000000000000001,
+      "recent_window": 96,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 1.0,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.6000000000000001,
+      "recent_window": 64,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.8821269841269842,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.6000000000000001,
+      "recent_window": 48,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.802984126984127,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    },
+    {
+      "prune_ratio": 0.6000000000000001,
+      "recent_window": 32,
+      "savings_pct": 85.104248046875,
+      "quality_retention": 0.7688174603174603,
+      "accuracy": 0.85,
+      "efficiency": 0.7233861083984374
+    }
+  ]
+}
