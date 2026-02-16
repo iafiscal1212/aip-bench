@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aip-bench"
+name = "aip-bench-suite"
 version = "0.1.0"
 description = "Benchmarking suite for LLM hallucination detection, inference efficiency, and QA compression evaluation"
 readme = "README.md"
