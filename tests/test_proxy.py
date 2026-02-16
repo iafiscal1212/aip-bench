@@ -174,9 +174,9 @@ class TestMerge:
 
 class TestThreshold:
     def test_no_compress_below_threshold(self):
-        """Should not compress when token count is below threshold."""
+        """Should not compress when token count is below min_tokens."""
         accordion = MessageAccordion(profile="conservative")
-        # conservative threshold = 0.7, default context = 200k
+        # conservative min_tokens = 8000
         # A few short messages won't trigger compression
         msgs = [
             {"role": "system", "content": "Hi"},
@@ -188,17 +188,28 @@ class TestThreshold:
         assert compressed == msgs
 
     def test_compress_balanced_profile(self):
-        """Balanced profile should compress large conversations."""
+        """Balanced profile should compress conversations over 5K tokens."""
         accordion = MessageAccordion(profile="balanced")
-        # Build a conversation that exceeds threshold for gpt-4 (8192 tokens)
+        # balanced min_tokens = 5000 -> need >20K chars
         msgs = [{"role": "system", "content": "System prompt."}]
         for i in range(100):
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"Message {i}: " + "word " * 200})
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs)
         assert stats["compressed"] is True
         savings_pct = stats["tokens_saved"] / stats["tokens_before"] * 100
         assert savings_pct > 10  # At least 10% savings
+
+    def test_absolute_threshold_fires_early(self):
+        """min_tokens triggers on modest conversations, not just near context limit."""
+        accordion = MessageAccordion(profile="balanced")
+        # ~6K tokens = 24K chars -> above min_tokens=5000
+        msgs = [{"role": "system", "content": "Be helpful."}]
+        for i in range(30):
+            role = "user" if i % 2 == 0 else "assistant"
+            msgs.append({"role": role, "content": f"Msg {i}: " + "x" * 800})
+        compressed, stats = accordion.compress(msgs)
+        assert stats["compressed"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +354,119 @@ class TestAccordionSession:
         compressed, stats = accordion.compress([])
         assert compressed == []
         assert stats["compressed"] is False
+
+
+# ---------------------------------------------------------------------------
+# Content block truncation (Anthropic tool_result)
+# ---------------------------------------------------------------------------
+
+class TestContentBlockTruncation:
+    def test_truncates_large_tool_result_blocks(self):
+        """Anthropic tool_result with large file content gets truncated."""
+        accordion = MessageAccordion(profile="aggressive")
+        big_file = "line\n" * 5000  # ~25K chars -> ~6K tokens
+        msgs = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": [
+                {"type": "tool_result", "text": big_file},
+            ]},
+        ]
+        # Add enough messages to trigger compression
+        for i in range(20):
+            role = "user" if i % 2 == 0 else "assistant"
+            msgs.append({"role": role, "content": f"msg {i}: " + "y" * 400})
+
+        compressed, stats = accordion.compress(msgs)
+        # The tool_result block should have been truncated
+        tool_msg = compressed[1]  # after system
+        if isinstance(tool_msg["content"], list):
+            text = tool_msg["content"][0].get("text", "")
+        else:
+            text = str(tool_msg["content"])
+        assert len(text) < len(big_file)
+        assert "[...truncated...]" in text
+
+    def test_small_blocks_untouched(self):
+        """Small content blocks pass through unchanged."""
+        accordion = MessageAccordion(profile="balanced")
+        msgs = [
+            {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+        ]
+        compressed, stats = accordion.compress(msgs)
+        assert compressed[0]["content"][0]["text"] == "Hello"
+
+
+# ---------------------------------------------------------------------------
+# System prompt compression
+# ---------------------------------------------------------------------------
+
+class TestSystemCompression:
+    def test_large_system_prompt_compressed(self):
+        """balanced/aggressive profiles truncate large system prompts."""
+        accordion = MessageAccordion(profile="balanced")
+        # balanced max_system_tokens = 4096 -> 16K chars
+        huge_system = "You are helpful. " * 2000  # ~34K chars -> ~8.5K tokens
+        msgs = [
+            {"role": "system", "content": huge_system},
+        ]
+        # Need enough total tokens to pass min_tokens threshold
+        for i in range(30):
+            role = "user" if i % 2 == 0 else "assistant"
+            msgs.append({"role": role, "content": f"Msg {i}: " + "z" * 800})
+
+        compressed, stats = accordion.compress(msgs)
+        sys_msg = [m for m in compressed if m["role"] == "system"][0]
+        # System content should be shorter than original
+        assert len(str(sys_msg["content"])) < len(huge_system)
+        assert "[...truncated...]" in str(sys_msg["content"])
+
+    def test_conservative_no_system_compression(self):
+        """Conservative profile (max_system_tokens=0) never compresses system."""
+        accordion = MessageAccordion(profile="conservative")
+        huge_system = "You are helpful. " * 2000
+        msgs = [{"role": "system", "content": huge_system}]
+        for i in range(60):
+            role = "user" if i % 2 == 0 else "assistant"
+            msgs.append({"role": role, "content": f"Msg {i}: " + "z" * 800})
+        compressed, stats = accordion.compress(msgs)
+        sys_msg = [m for m in compressed if m["role"] == "system"][0]
+        assert sys_msg["content"] == huge_system
+
+
+# ---------------------------------------------------------------------------
+# Merge preserves high-score messages
+# ---------------------------------------------------------------------------
+
+class TestMergeKeepsBest:
+    def test_merge_keeps_highest_scoring(self):
+        """Merge keeps the best message per chunk, not just first/last."""
+        accordion = MessageAccordion(profile="aggressive")
+        msgs = [{"role": "system", "content": "System."}]
+        # Add old messages with one code-heavy message in the middle
+        for i in range(20):
+            if i == 10:
+                # This one has code + error -> high score
+                msgs.append({"role": "user", "content": "```python\nraise Error\n```\nerror traceback"})
+            else:
+                msgs.append({"role": "user" if i % 2 == 0 else "assistant", "content": "filler " * 50})
+        # Recent window
+        for i in range(6):
+            msgs.append({"role": "user" if i % 2 == 0 else "assistant", "content": "recent " * 50})
+
+        compressed, stats = accordion.compress(msgs)
+        # The code+error message should be preserved verbatim
+        preserved = [m for m in compressed if "```python" in m.get("content", "")]
+        assert len(preserved) == 1
+
+
+# ---------------------------------------------------------------------------
+# Stdlib fallback server import
+# ---------------------------------------------------------------------------
+
+class TestStdlibFallback:
+    def test_stdlib_server_importable(self):
+        """StdlibProxyServer can be imported without aiohttp."""
+        from aip_bench.proxy.server_stdlib import StdlibProxyServer
+        server = StdlibProxyServer(port=9999, profile="balanced", target="http://localhost:1234")
+        assert server.port == 9999
+        assert server.accordion.profile_name == "balanced"

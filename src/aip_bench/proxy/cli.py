@@ -42,18 +42,23 @@ def main(argv=None):
 
     try:
         from .server import ProxyServer
+        server = ProxyServer(
+            port=args.port,
+            profile=args.profile,
+            target=args.target,
+            verbose=args.verbose,
+        )
     except ImportError:
         print(
-            "Error: aiohttp is required for aip-proxy.\n"
-            "Install with: pip install aip-bench[proxy]",
+            "aiohttp not found, using stdlib fallback (no SSE streaming).",
             file=sys.stderr,
         )
-        sys.exit(1)
+        from .server_stdlib import StdlibProxyServer
+        server = StdlibProxyServer(
+            port=args.port,
+            profile=args.profile,
+            target=args.target,
+            verbose=args.verbose,
+        )
 
-    server = ProxyServer(
-        port=args.port,
-        profile=args.profile,
-        target=args.target,
-        verbose=args.verbose,
-    )
     server.run()

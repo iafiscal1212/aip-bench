@@ -24,25 +24,28 @@ MODEL_CONTEXTS = {
 
 PROFILES = {
     "conservative": {
-        "threshold": 0.7,
+        "min_tokens": 8_000,    # Compress when >8K tokens (absolute)
         "keep_ratio": 0.85,
         "recent_window": 20,
         "method": "evict",
         "max_msg_tokens": 8192,
+        "max_system_tokens": 0, # 0 = no system compression
     },
     "balanced": {
-        "threshold": 0.4,
+        "min_tokens": 5_000,    # Compress when >5K tokens
         "keep_ratio": 0.60,
         "recent_window": 12,
         "method": "evict",
         "max_msg_tokens": 4096,
+        "max_system_tokens": 4096,
     },
     "aggressive": {
-        "threshold": 0.2,
+        "min_tokens": 2_000,    # Compress when >2K tokens
         "keep_ratio": 0.35,
         "recent_window": 6,
         "method": "merge",
         "max_msg_tokens": 2048,
+        "max_system_tokens": 2048,
     },
 }
 
@@ -67,15 +70,45 @@ def estimate_tokens(messages):
 
 
 def _truncate_content(content, max_tokens):
-    """Truncate content to approximately max_tokens."""
+    """Truncate content to approximately max_tokens.
+
+    Handles both plain strings and Anthropic-style content block lists
+    (e.g. tool_result with large file contents).
+    """
     max_chars = max_tokens * 4
     if isinstance(content, list):
-        return content  # Don't truncate structured content blocks
+        return _truncate_blocks(content, max_chars)
     content = str(content)
     if len(content) <= max_chars:
         return content
     half = max_chars // 2
     return content[:half] + "\n\n[...truncated...]\n\n" + content[-half:]
+
+
+def _truncate_blocks(blocks, max_chars):
+    """Truncate Anthropic-style content block lists."""
+    total = sum(len(b.get("text", "")) for b in blocks if isinstance(b, dict))
+    if total <= max_chars:
+        return blocks
+    # Budget per block, proportional to total allowance
+    result = []
+    remaining = max_chars
+    for block in blocks:
+        if not isinstance(block, dict):
+            result.append(block)
+            continue
+        block = dict(block)
+        text = block.get("text", "")
+        if not text:
+            result.append(block)
+            continue
+        budget = max(200, remaining * len(text) // max(total, 1))
+        if len(text) > budget:
+            half = budget // 2
+            block["text"] = text[:half] + "\n\n[...truncated...]\n\n" + text[-half:]
+        remaining -= len(block["text"])
+        result.append(block)
+    return result
 
 
 class MessageAccordion:
@@ -113,9 +146,8 @@ class MessageAccordion:
 
         tokens_before = estimate_tokens(messages)
 
-        # Check threshold
-        ctx_window = MODEL_CONTEXTS.get(model, 200_000)
-        if tokens_before < ctx_window * self.profile["threshold"]:
+        # Check absolute token threshold
+        if tokens_before < self.profile["min_tokens"]:
             return messages, {
                 "compressed": False,
                 "tokens_before": tokens_before,
@@ -125,8 +157,28 @@ class MessageAccordion:
         # Split into system, old, recent
         system, old, recent = self._split(messages)
 
+        # Compress system prompt if configured and large
+        max_sys = self.profile.get("max_system_tokens", 0)
+        if max_sys > 0:
+            system = self._compress_system(system, max_sys)
+
         if not old:
-            # Nothing to compress
+            # Nothing to compress in conversation, but system may have been compressed
+            result = system + recent
+            tokens_after = estimate_tokens(result)
+            if tokens_after < tokens_before:
+                stats = {
+                    "compressed": True,
+                    "tokens_before": tokens_before,
+                    "tokens_after": tokens_after,
+                    "tokens_saved": tokens_before - tokens_after,
+                    "ratio": tokens_after / tokens_before if tokens_before > 0 else 1.0,
+                    "messages_before": len(messages),
+                    "messages_after": len(result),
+                }
+                if self.stats is not None:
+                    self.stats.record(tokens_before, tokens_after)
+                return result, stats
             return messages, {
                 "compressed": False,
                 "tokens_before": tokens_before,
@@ -162,12 +214,23 @@ class MessageAccordion:
         return result, stats
 
     def _truncate_messages(self, messages):
-        """Truncate individual messages that exceed max_msg_tokens."""
+        """Truncate individual non-system messages that exceed max_msg_tokens.
+
+        System messages are handled separately by _compress_system.
+        """
         max_tokens = self.profile["max_msg_tokens"]
         result = []
         for m in messages:
+            if m.get("role") == "system":
+                result.append(m)
+                continue
             content = m.get("content", "")
-            tokens = len(str(content)) // 4
+            if isinstance(content, list):
+                tokens = sum(
+                    len(b.get("text", "")) for b in content if isinstance(b, dict)
+                ) // 4
+            else:
+                tokens = len(str(content)) // 4
             if tokens > max_tokens:
                 m = dict(m)
                 m["content"] = _truncate_content(content, max_tokens)
@@ -197,6 +260,20 @@ class MessageAccordion:
         old = rest[:-window]
         recent = rest[-window:]
         return system, old, recent
+
+    def _compress_system(self, system_msgs, max_tokens):
+        """Truncate system messages that exceed max_tokens."""
+        result = []
+        for m in system_msgs:
+            content = m.get("content", "")
+            tokens = len(str(content)) // 4 if not isinstance(content, list) else (
+                sum(len(b.get("text", "")) for b in content if isinstance(b, dict)) // 4
+            )
+            if tokens > max_tokens:
+                m = dict(m)
+                m["content"] = _truncate_content(content, max_tokens)
+            result.append(m)
+        return result
 
     def _score(self, message):
         """Score a message's importance from 0.0 to 1.0."""
@@ -266,27 +343,45 @@ class MessageAccordion:
         return result
 
     def _merge(self, old, scores):
-        """Group old messages into chunks and summarize each chunk."""
+        """Group old messages into chunks, keep the highest-scoring per chunk."""
         chunk_size = max(2, len(old) // 3)
         chunks = []
+        chunk_scores = []
         for i in range(0, len(old), chunk_size):
             chunks.append(old[i : i + chunk_size])
+            chunk_scores.append(scores[i : i + chunk_size])
 
         result = []
-        for chunk in chunks:
+        for chunk, c_scores in zip(chunks, chunk_scores):
             if len(chunk) == 1:
                 result.append(chunk[0])
                 continue
 
-            # Build a summary from first and last messages in chunk
-            first_content = str(chunk[0].get("content", ""))[:200]
-            last_content = str(chunk[-1].get("content", ""))[:200]
+            # Keep the highest-scoring message from the chunk verbatim
+            best_idx = max(range(len(c_scores)), key=lambda j: c_scores[j])
+            best_msg = chunk[best_idx]
 
-            summary = (
-                f"[Merged {len(chunk)} messages]\n"
-                f"First: {first_content}...\n"
-                f"Last: {last_content}..."
+            # Summarize the rest
+            rest_count = len(chunk) - 1
+            snippets = []
+            for j, m in enumerate(chunk):
+                if j == best_idx:
+                    continue
+                text = str(m.get("content", ""))
+                if isinstance(m.get("content"), list):
+                    text = " ".join(
+                        b.get("text", "")[:80] for b in m["content"] if isinstance(b, dict)
+                    )
+                snippets.append(f"  - [{m.get('role', '?')}] {text[:120]}")
+
+            summary_content = (
+                f"[Merged {rest_count} other message(s) from this section]\n"
+                + "\n".join(snippets[:5])
             )
-            result.append({"role": "assistant", "content": summary})
+            if len(snippets) > 5:
+                summary_content += f"\n  ... and {len(snippets) - 5} more"
+
+            result.append(best_msg)
+            result.append({"role": "assistant", "content": summary_content})
 
         return result
