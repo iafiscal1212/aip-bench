@@ -92,6 +92,7 @@ from aip_bench.cache import ResultCache
 from aip_bench.export import to_json, to_csv, to_html
 from aip_bench.config import load_config, run_suite, validate_config
 from aip_bench.logging_utils import get_logger, setup_file_logging, quiet, verbose
+from aip_bench.proxy import MessageAccordion, CompressionStats, detect_provider
 
 __all__ = [
     # Evaluator — metrics
@@ -161,4 +162,8 @@ __all__ = [
     "setup_file_logging",
     "quiet",
     "verbose",
+    # Proxy
+    "MessageAccordion",
+    "CompressionStats",
+    "detect_provider",
 ]

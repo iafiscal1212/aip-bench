@@ -42,10 +42,12 @@ anthropic = ["anthropic>=0.18"]
 viz = ["matplotlib>=3.5"]
 config = ["pyyaml>=6.0"]
 progress = ["tqdm>=4.60"]
-all = ["datasets>=2.14", "torch>=1.9", "transformers>=4.30", "openai>=1.0", "anthropic>=0.18", "matplotlib>=3.5", "pyyaml>=6.0", "tqdm>=4.60"]
+proxy = ["aiohttp>=3.9"]
+all = ["datasets>=2.14", "torch>=1.9", "transformers>=4.30", "openai>=1.0", "anthropic>=0.18", "matplotlib>=3.5", "pyyaml>=6.0", "tqdm>=4.60", "aiohttp>=3.9"]
 
 [project.scripts]
 aip-bench = "aip_bench.cli:main"
+aip-proxy = "aip_bench.proxy.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/iafiscal1212/aip-bench"
