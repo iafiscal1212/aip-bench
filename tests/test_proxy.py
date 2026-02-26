@@ -453,9 +453,9 @@ class TestMergeKeepsBest:
         for i in range(6):
             msgs.append({"role": "user" if i % 2 == 0 else "assistant", "content": "recent " * 50})
 
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, model="gpt-4")
         # The code+error message should be preserved verbatim
-        preserved = [m for m in compressed if "```python" in m.get("content", "")]
+        preserved = [m for m in compressed if "```python" in m.get("content", "") and "error traceback" in m.get("content", "")]
         assert len(preserved) == 1
 
 
@@ -470,3 +470,113 @@ class TestStdlibFallback:
         server = StdlibProxyServer(port=9999, profile="balanced", target="http://localhost:1234")
         assert server.port == 9999
         assert server.accordion.profile_name == "balanced"
+
+
+# ---------------------------------------------------------------------------
+# Anthropic provider tool use validation
+# ---------------------------------------------------------------------------
+
+class TestAnthropicProviderValidation:
+    def setup_method(self):
+        self.provider = AnthropicProvider()
+
+    def test_validate_tool_use_removes_invalid_tool_result(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_123",
+                        "name": "get_weather",
+                        "input": {"location": "San Francisco"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "70 degrees and sunny",
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "invalid_id",
+                        "content": "some other result",
+                    },
+                ],
+            },
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+
+        # The user message should be at index 1
+        user_message_content = validated_messages[1].get("content", [])
+
+        # Check that the invalid tool_result was removed
+        assert len(user_message_content) == 1
+        assert user_message_content[0].get("tool_use_id") == "tool_123"
+
+    def test_validate_tool_use_keeps_valid_tool_results(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_123",
+                        "name": "get_weather",
+                        "input": {"location": "San Francisco"},
+                    },
+                    {"type": "tool_use", "id": "tool_456", "name": "get_time", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "70 degrees and sunny",
+                    },
+                    {"type": "tool_result", "tool_use_id": "tool_456", "content": "10:00 AM"},
+                ],
+            },
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+        user_message_content = validated_messages[1].get("content", [])
+
+        assert len(user_message_content) == 2
+
+    def test_validate_tool_use_no_tool_results(self):
+        messages = [
+            {"role": "assistant", "content": "Hello"},
+            {"role": "user", "content": "Hi"},
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+        assert messages == validated_messages
+
+    def test_validate_tool_use_no_tool_use(self):
+        messages = [
+            {"role": "assistant", "content": "Hello"},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "70 degrees and sunny",
+                    }
+                ],
+            },
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+        user_message_content = validated_messages[1].get("content", [])
+
+        # All tool_results should be removed
+        assert len(user_message_content) == 0
