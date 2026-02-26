@@ -1,0 +1,37 @@
+FROM python:3.11-slim
+
+# Definir variables de entorno
+# Añadimos la ruta de binarios de pipx al PATH para que reconozca el comando 'aip-proxy'
+ENV PORT=8080
+ENV PATH="/home/aipbench/.local/bin:${PATH}"
+
+# EXPOSE es solo documentación. Dejamos el puerto por defecto.
+EXPOSE ${PORT}
+
+# 1. Instalar dependencias del sistema y pipx en una sola capa
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir pipx
+
+# 2. Crear el usuario non-root (se añade --group para asegurar que el usuario tenga su propio grupo)
+ARG UID=10001
+RUN addgroup --system aipbench && \
+    adduser --system --uid ${UID} --ingroup aipbench --home /home/aipbench aipbench
+
+WORKDIR /app
+# Ensure /app is owned by aipbench (not just the files inside)
+RUN chown -R aipbench:aipbench /app
+
+# 3. Copiar el código fuente dándole propiedad al usuario non-root desde el inicio
+COPY --chown=aipbench:aipbench . .
+
+# 4. Cambiar al usuario antes de instalar
+USER aipbench
+
+# 5. Instalar la aplicación
+# Al no especificar --pipx-home, usará ~/.local por defecto, lo cual es perfecto.
+RUN pipx install ".[proxy]"
+
+# 6. Ejecutar. Usamos la forma shell (sin corchetes) para que expanda $PORT en tiempo de ejecución
+CMD aip-proxy --port ${PORT} --profile conservative
