@@ -580,3 +580,26 @@ class TestAnthropicProviderValidation:
 
         # All tool_results should be removed
         assert len(user_message_content) == 0
+
+    def test_filter_empty_user_messages(self):
+        messages = [
+            {"role": "user", "content": "Hello world"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": None},  # Should be removed
+            {"role": "user", "content": ""},    # Should be removed
+            {"role": "user", "content": "   "}, # Should be removed (whitespace only)
+            {"role": "user", "content": []},    # Should be removed
+            {"role": "user", "content": ["Hello"]}, # Should be kept
+            {"role": "assistant", "content": "Ok"},
+        ]
+        
+        filtered_messages = self.provider._filter_empty_user_messages(messages)
+        
+        expected_messages = [
+            {"role": "user", "content": "Hello world"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": ["Hello"]},
+            {"role": "assistant", "content": "Ok"},
+        ]
+        
+        assert filtered_messages == expected_messages
