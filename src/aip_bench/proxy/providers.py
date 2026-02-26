@@ -66,6 +66,19 @@ class AnthropicProvider(Provider):
             or (isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in valid_ids)
         ]
 
+    def _filter_empty_user_messages(self, messages):
+        """Removes user messages with empty, absent, or empty list content."""
+        filtered_messages = []
+        for msg in messages:
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if content is None or (isinstance(content, list) and not content) or \
+                   (isinstance(content, str) and not content.strip()):
+                    continue # Skip this message
+            filtered_messages.append(msg)
+        return filtered_messages
+
+
     def _validate_tool_use(self, messages):
         """Filter tool_result blocks to ensure they have a corresponding tool_use ID
         from the immediately preceding assistant message.
@@ -79,24 +92,24 @@ class AnthropicProvider(Provider):
         for i in range(1, len(messages)):
             curr_msg = messages[i]
             prev_msg = messages[i-1]
-
+            
             processed_curr_msg = curr_msg # Default to keeping the original message
 
             # We only care about user messages that follow assistant messages
             if (curr_msg.get("role") == "user" and isinstance(curr_msg.get("content"), list) and
-                prev_msg.get("role") == "assistant"): # Removed isinstance(prev_msg.get("content"), list) here
+                prev_msg.get("role") == "assistant"):
 
                 valid_ids = set() # Initialize valid_ids to empty set
                 if isinstance(prev_msg.get("content"), list): # Only try to get IDs if content is a list
                     valid_ids = self._get_valid_tool_ids(prev_msg["content"])
-
+                
                 filtered_content = self._filter_tool_results(curr_msg["content"], valid_ids)
 
                 # If the content changed, create a new message dict
                 if len(filtered_content) < len(curr_msg["content"]):
                     processed_curr_msg = dict(curr_msg)
                     processed_curr_msg["content"] = filtered_content
-
+            
             validated_messages.append(processed_curr_msg)
 
         return validated_messages
@@ -106,7 +119,11 @@ class AnthropicProvider(Provider):
 
     def replace_messages(self, body, messages):
         body = dict(body)
-        # Validate tool use before sending to Anthropic
+        
+        # New validation step: filter empty user messages
+        messages = self._filter_empty_user_messages(messages)
+
+        # Existing tool use validation
         messages = self._validate_tool_use(messages)
         body["messages"] = messages
         return body
