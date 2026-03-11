@@ -200,6 +200,31 @@ class AnthropicProvider(Provider):
         placeholder = {"role": "user", "content": "[Context omitted]"}
         return [placeholder] + list(messages)
 
+    def count_tokens(self, messages, model=None):
+        """Estimate Anthropic tokens using tiktoken + correction factor.
+        
+        Anthropic's tokenizer is similar to OpenAI's cl100k_base but 
+        typically counts ~10% more tokens for the same text.
+        """
+        try:
+            import tiktoken
+        except ImportError:
+            return super().count_tokens(messages, model)
+            
+        enc = tiktoken.get_encoding("cl100k_base")
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                text = " ".join(
+                    str(b.get("text", "")) for b in content if isinstance(b, dict)
+                )
+            else:
+                text = str(content)
+            # Claude overhead is slightly different but ~4 tokens per msg is a good proxy
+            total += 4 + int(len(enc.encode(text)) * 1.1)
+        return total + 3
+
     # ------------------------------------------------------------------
     # Provider interface
     # ------------------------------------------------------------------

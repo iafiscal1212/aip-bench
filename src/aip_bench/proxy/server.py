@@ -73,7 +73,7 @@ class ProxyServer:
         messages = provider.extract_messages(body)
         if messages:
             compressed, comp_stats = self.accordion.compress(
-                messages, model=body.get("model")
+                messages, provider=provider, model=body.get("model")
             )
             body = provider.replace_messages(body, compressed)
 

@@ -32,6 +32,24 @@ class Provider:
             forwarded[key] = value
         return forwarded
 
+    def count_tokens(self, messages, model=None):
+        """Count tokens in a list of messages.
+        
+        Default implementation uses a simple character-based heuristic.
+        Subclasses should override for model-specific accuracy.
+        """
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                text = " ".join(
+                    str(b.get("text", "")) for b in content if isinstance(b, dict)
+                )
+            else:
+                text = str(content)
+            total += len(text) // 4
+        return max(total, 1)
+
     def build_url(self, target, path):
         """Build the full upstream URL."""
         if target:
