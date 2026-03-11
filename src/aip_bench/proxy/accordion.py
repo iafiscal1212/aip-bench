@@ -111,6 +111,15 @@ def _truncate_blocks(blocks, max_chars):
     return result
 
 
+def _jaccard_similarity(text1, text2):
+    """Compute token-based Jaccard similarity between two strings."""
+    s1 = set(str(text1).lower().split())
+    s2 = set(str(text2).lower().split())
+    if not s1 or not s2:
+        return 0.0
+    return len(s1 & s2) / len(s1 | s2)
+
+
 class MessageAccordion:
     """Compress chat messages using the Accordion pattern.
 
@@ -186,7 +195,15 @@ class MessageAccordion:
             }
 
         # Score old messages
-        scores = [self._score(m) for m in old]
+        scores = []
+        for i, m in enumerate(old):
+            score = self._score(m)
+            # Semantic redundancy check: if too similar to previous, penalize
+            if i > 0:
+                similarity = _jaccard_similarity(m.get("content", ""), old[i-1].get("content", ""))
+                if similarity > 0.8:
+                    score *= 0.5  # Heavy penalty for high repetition
+            scores.append(score)
 
         # Apply compression strategy
         if self.profile["method"] == "merge":
@@ -277,6 +294,10 @@ class MessageAccordion:
 
     def _score(self, message):
         """Score a message's importance from 0.0 to 1.0."""
+        # Tool-calling safety: always preserve tool messages and calls
+        if message.get("role") == "tool" or message.get("tool_calls") or message.get("tool_call_id"):
+            return 1.0
+
         score = 0.0
         content = message.get("content", "")
         if isinstance(content, list):
@@ -353,8 +374,13 @@ class MessageAccordion:
 
         result = []
         for chunk, c_scores in zip(chunks, chunk_scores):
-            if len(chunk) == 1:
-                result.append(chunk[0])
+            # If any message in the chunk is a tool/call, keep the whole chunk verbatim
+            has_tool = any(
+                m.get("role") == "tool" or m.get("tool_calls") or m.get("tool_call_id")
+                for m in chunk
+            )
+            if len(chunk) == 1 or has_tool:
+                result.extend(chunk)
                 continue
 
             # Keep the highest-scoring message from the chunk verbatim

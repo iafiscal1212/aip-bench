@@ -53,6 +53,10 @@ class ProxyServer:
 
     async def handle_request(self, request):
         """Main request handler: detect, compress, forward."""
+        # Special status page
+        if request.path == "/_stats":
+            return self._render_stats()
+
         # Read raw body
         try:
             body = await request.json()
@@ -96,6 +100,66 @@ class ProxyServer:
             return await self._stream(target_url, body, headers, request)
         else:
             return await self._forward(target_url, body, headers, provider.name)
+
+    def _render_stats(self):
+        """Render a simple HTML dashboard with compression stats."""
+        s = self.stats.summary()
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>AIP Proxy Dashboard</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{ font-family: -apple-system, sans-serif; background: #f4f7f6; color: #333; line-height: 1.6; margin: 0; padding: 20px; }}
+                .card {{ background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 20px; max-width: 600px; margin: 20px auto; }}
+                h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 0; }}
+                .stat-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }}
+                .stat-item {{ background: #f9f9f9; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db; }}
+                .stat-label {{ font-size: 12px; color: #7f8c8d; text-transform: uppercase; font-weight: bold; }}
+                .stat-value {{ font-size: 24px; font-weight: bold; color: #2c3e50; }}
+                .savings {{ color: #27ae60; }}
+                .footer {{ text-align: center; font-size: 12px; color: #95a5a6; margin-top: 20px; }}
+            </style>
+            <meta http-equiv="refresh" content="5">
+        </head>
+        <body>
+            <div class="card">
+                <h1>AIP Bench Proxy</h1>
+                <p>Profile: <strong>{self.accordion.profile_name.upper()}</strong> | Uptime: {s['elapsed_seconds']}s</p>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Total Requests</div>
+                        <div class="stat-value">{s['requests']}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Compressions</div>
+                        <div class="stat-value">{s['compressions']}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Tokens Saved</div>
+                        <div class="stat-value savings">{s['tokens_saved']:,}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Savings %</div>
+                        <div class="stat-value savings">{s['savings_pct']:.1f}%</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Input Tokens</div>
+                        <div class="stat-value">{s['tokens_before_total']:,}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Output Tokens</div>
+                        <div class="stat-value">{s['tokens_after_total']:,}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="footer">AIP-Bench • Efficiency Through Context Compression</div>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
 
     async def _forward(self, url, body, headers, provider_name="unknown"):
         """Forward request and return JSON response."""
