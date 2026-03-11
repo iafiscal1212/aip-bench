@@ -104,6 +104,10 @@ class ProxyServer:
     def _render_stats(self):
         """Render a simple HTML dashboard with compression stats."""
         s = self.stats.summary()
+        pct = s['savings_pct']
+        # Color based on savings
+        color = "#27ae60" if pct > 50 else "#f39c12" if pct > 20 else "#3498db"
+        
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -112,50 +116,74 @@ class ProxyServer:
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-                body {{ font-family: -apple-system, sans-serif; background: #f4f7f6; color: #333; line-height: 1.6; margin: 0; padding: 20px; }}
-                .card {{ background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 20px; max-width: 600px; margin: 20px auto; }}
-                h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 0; }}
-                .stat-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }}
-                .stat-item {{ background: #f9f9f9; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db; }}
-                .stat-label {{ font-size: 12px; color: #7f8c8d; text-transform: uppercase; font-weight: bold; }}
-                .stat-value {{ font-size: 24px; font-weight: bold; color: #2c3e50; }}
-                .savings {{ color: #27ae60; }}
-                .footer {{ text-align: center; font-size: 12px; color: #95a5a6; margin-top: 20px; }}
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; line-height: 1.6; margin: 0; padding: 20px; }}
+                .container {{ max-width: 800px; margin: 40px auto; }}
+                .card {{ background: #1e293b; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); padding: 30px; border: 1px solid #334155; }}
+                h1 {{ color: #38bdf8; margin-top: 0; font-weight: 300; letter-spacing: -1px; display: flex; justify-content: space-between; align-items: center; }}
+                .badge {{ background: #334155; color: #94a3b8; font-size: 12px; padding: 4px 12px; border-radius: 20px; font-weight: bold; text-transform: uppercase; }}
+                .profile-tag {{ color: #38bdf8; font-weight: bold; }}
+                
+                .progress-container {{ background: #334155; border-radius: 10px; height: 20px; margin: 25px 0; overflow: hidden; position: relative; }}
+                .progress-bar {{ background: {color}; height: 100%; width: {pct}%; transition: width 1s ease-in-out; border-radius: 10px; }}
+                .progress-text {{ position: absolute; width: 100%; text-align: center; top: 0; line-height: 20px; font-size: 11px; font-weight: bold; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }}
+                
+                .stat-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 30px; }}
+                .stat-item {{ background: #0f172a; padding: 20px; border-radius: 10px; border: 1px solid #334155; transition: transform 0.2s; }}
+                .stat-item:hover {{ transform: translateY(-5px); border-color: #38bdf8; }}
+                .stat-label {{ font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }}
+                .stat-value {{ font-size: 28px; font-weight: bold; color: #f1f5f9; margin-top: 5px; }}
+                .stat-value.savings {{ color: {color}; }}
+                
+                .footer {{ text-align: center; font-size: 12px; color: #64748b; margin-top: 40px; border-top: 1px solid #334155; padding-top: 20px; }}
+                .uptime {{ font-style: italic; }}
             </style>
             <meta http-equiv="refresh" content="5">
         </head>
         <body>
-            <div class="card">
-                <h1>AIP Bench Proxy</h1>
-                <p>Profile: <strong>{self.accordion.profile_name.upper()}</strong> | Uptime: {s['elapsed_seconds']}s</p>
-                <div class="stat-grid">
-                    <div class="stat-item">
-                        <div class="stat-label">Total Requests</div>
-                        <div class="stat-value">{s['requests']}</div>
+            <div class="container">
+                <div class="card">
+                    <h1>
+                        AIP Proxy Dashboard
+                        <span class="badge">Live Stats</span>
+                    </h1>
+                    <p>Optimization Profile: <span class="profile-tag">{self.accordion.profile_name.upper()}</span> | <span class="uptime">Uptime: {s['elapsed_seconds']}s</span></p>
+                    
+                    <div class="progress-container">
+                        <div class="progress-bar"></div>
+                        <div class="progress-text">TOTAL TOKEN SAVINGS: {pct:.1f}%</div>
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Compressions</div>
-                        <div class="stat-value">{s['compressions']}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Tokens Saved</div>
-                        <div class="stat-value savings">{s['tokens_saved']:,}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Savings %</div>
-                        <div class="stat-value savings">{s['savings_pct']:.1f}%</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Input Tokens</div>
-                        <div class="stat-value">{s['tokens_before_total']:,}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Output Tokens</div>
-                        <div class="stat-value">{s['tokens_after_total']:,}</div>
+
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Requests</div>
+                            <div class="stat-value">{s['requests']}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Tokens Saved</div>
+                            <div class="stat-value savings">{s['tokens_saved']:,}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Ratio</div>
+                            <div class="stat-value">{s['avg_compression_ratio']:.2f}x</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">In (Context)</div>
+                            <div class="stat-value">{s['tokens_before_total']:,}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Out (Network)</div>
+                            <div class="stat-value">{s['tokens_after_total']:,}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Compressions</div>
+                            <div class="stat-value">{s['compressions']}</div>
+                        </div>
                     </div>
                 </div>
+                <div class="footer">
+                    AIP-Bench Engine • Accurate Tiktoken Counting • {self.accordion.profile_name.capitalize()} Mode
+                </div>
             </div>
-            <div class="footer">AIP-Bench • Efficiency Through Context Compression</div>
         </body>
         </html>
         """

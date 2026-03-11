@@ -59,7 +59,7 @@ try:
 except ImportError:
     tiktoken = None
 
-def get_tokenizer(model_name="gpt-4o"):
+def get_tokenizer(model_name="claude-3-5-sonnet-20241022"):
     """Get or cache a tiktoken encoder for a model."""
     if tiktoken is None:
         return None
@@ -72,7 +72,7 @@ def get_tokenizer(model_name="gpt-4o"):
     return _ENC_CACHE[model_name]
 
 
-def estimate_tokens(messages, model="gpt-4o"):
+def estimate_tokens(messages, model="claude-sonnet-4-5-20250929"):
     """Estimate token count for a list of messages.
     
     Uses tiktoken for precise counting if available, otherwise falls
@@ -190,7 +190,7 @@ class MessageAccordion:
         if not messages:
             return messages, {"compressed": False, "tokens_before": 0, "tokens_after": 0}
 
-        model = model or "gpt-4o"
+        model = model or "claude-sonnet-4-5-20250929"
 
         # Truncate individual messages first
         messages = self._truncate_messages(messages)
