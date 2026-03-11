@@ -55,23 +55,26 @@ class TestEstimateTokens:
     def test_basic(self):
         msgs = [{"role": "user", "content": "Hello world"}]
         tokens = estimate_tokens(msgs)
-        assert tokens >= 1
-        # "Hello world" = 11 chars -> ~2-3 tokens
-        assert tokens == 11 // 4 or tokens == max(11 // 4, 1)
+        # Accurate counting (tiktoken) + overhead per message/conv
+        # ~2 tokens for "Hello world" + 4 (msg) + 3 (conv) = ~9
+        assert tokens >= 7
 
     def test_empty_messages(self):
-        assert estimate_tokens([]) == 1  # min 1
+        # Base conversation overhead is 3 tokens
+        assert estimate_tokens([]) == 3
 
     def test_long_content(self):
         msgs = [{"role": "user", "content": "a" * 4000}]
         tokens = estimate_tokens(msgs)
-        assert tokens == 1000
+        # tiktoken is more dense than len//4 for repetitive text
+        # "a" repeated is very efficient in BPE
+        assert 400 < tokens < 600
 
     def test_content_blocks(self):
         """Anthropic-style content blocks."""
         msgs = [{"role": "user", "content": [{"text": "Hello " * 100}]}]
         tokens = estimate_tokens(msgs)
-        assert tokens > 10
+        assert tokens > 20
 
 
 # ---------------------------------------------------------------------------
@@ -190,11 +193,13 @@ class TestThreshold:
     def test_compress_balanced_profile(self):
         """Balanced profile should compress conversations over 5K tokens."""
         accordion = MessageAccordion(profile="balanced")
-        # balanced min_tokens = 5000 -> need >20K chars
+        # balanced min_tokens = 5000 -> need enough tokens
         msgs = [{"role": "system", "content": "System prompt."}]
-        for i in range(100):
+        # Need distinct text or much more of it for tiktoken to hit 5k
+        for i in range(200):
             role = "user" if i % 2 == 0 else "assistant"
-            msgs.append({"role": role, "content": f"Message {i}: " + "word " * 200})
+            # More varied text so it doesn't compress as well in BPE
+            msgs.append({"role": role, "content": f"Message {i}: " + f"word {i} " * 150})
         compressed, stats = accordion.compress(msgs)
         assert stats["compressed"] is True
         savings_pct = stats["tokens_saved"] / stats["tokens_before"] * 100
@@ -203,11 +208,11 @@ class TestThreshold:
     def test_absolute_threshold_fires_early(self):
         """min_tokens triggers on modest conversations, not just near context limit."""
         accordion = MessageAccordion(profile="balanced")
-        # ~6K tokens = 24K chars -> above min_tokens=5000
+        # ~6K tokens needed. Let's use more unique data.
         msgs = [{"role": "system", "content": "Be helpful."}]
-        for i in range(30):
+        for i in range(50):
             role = "user" if i % 2 == 0 else "assistant"
-            msgs.append({"role": role, "content": f"Msg {i}: " + "x" * 800})
+            msgs.append({"role": role, "content": f"Msg {i}: " + f"Unique data {i} " * 100})
         compressed, stats = accordion.compress(msgs)
         assert stats["compressed"] is True
 
