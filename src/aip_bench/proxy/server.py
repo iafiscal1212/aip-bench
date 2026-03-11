@@ -107,7 +107,7 @@ class ProxyServer:
                     err_text = data.decode("utf-8", errors="replace")
                 except Exception:
                     err_text = "<unreadable>"
-                logger.error(
+                logger.debug(
                     "[%s] Upstream error %d: %s",
                     provider_name, upstream.status, err_text[:1000],
                 )
@@ -142,7 +142,7 @@ class ProxyServer:
                     err_text = data.decode("utf-8", errors="replace")
                 except Exception:
                     err_text = "<unreadable>"
-                logger.error("Upstream error %d (raw): %s", upstream.status, err_text[:1000])
+                logger.debug("Upstream error %d (raw): %s", upstream.status, err_text[:1000])
             return web.Response(
                 body=data,
                 status=upstream.status,
@@ -165,7 +165,7 @@ class ProxyServer:
                     err_text = data.decode("utf-8", errors="replace")
                 except Exception:
                     err_text = "<unreadable>"
-                logger.error("Upstream stream error %d: %s", upstream.status, err_text[:1000])
+                logger.debug("Upstream stream error %d: %s", upstream.status, err_text[:1000])
                 await response.write(data)
             else:
                 async for chunk in upstream.content.iter_any():
@@ -205,6 +205,7 @@ class ProxyServer:
         logging.basicConfig(
             level=logging.DEBUG if self.verbose else logging.INFO,
             format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+            force=True,
         )
         logger.info(
             "aip-proxy starting on port %d (profile=%s, target=%s)",
