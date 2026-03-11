@@ -10,7 +10,6 @@ from aip_bench.proxy.accordion import (
     MessageAccordion,
     estimate_tokens,
     PROFILES,
-    MODEL_CONTEXTS,
     ROLE_WEIGHTS,
 )
 from aip_bench.proxy.providers import (
@@ -55,20 +54,18 @@ class TestEstimateTokens:
     def test_basic(self):
         msgs = [{"role": "user", "content": "Hello world"}]
         tokens = estimate_tokens(msgs)
-        # Accurate counting (tiktoken) + overhead per message/conv
-        # ~2 tokens for "Hello world" + 4 (msg) + 3 (conv) = ~9
-        assert tokens >= 7
+        # ~11 chars / 4 = 2 tokens, minimum 1
+        assert tokens >= 1
 
     def test_empty_messages(self):
-        # Base conversation overhead is 3 tokens
-        assert estimate_tokens([]) == 3
+        # No messages → minimum 1
+        assert estimate_tokens([]) == 1
 
     def test_long_content(self):
         msgs = [{"role": "user", "content": "a" * 4000}]
         tokens = estimate_tokens(msgs)
-        # tiktoken is more dense than len//4 for repetitive text
-        # "a" repeated is very efficient in BPE
-        assert 400 < tokens < 600
+        # 4000 / 4 = 1000 tokens
+        assert tokens == 1000
 
     def test_content_blocks(self):
         """Anthropic-style content blocks."""
@@ -140,8 +137,7 @@ class TestEvict:
         msgs = _make_conversation(n_old=40, n_recent=12)
         compressed, stats = accordion.compress(msgs, model="gpt-4")
         assert stats["compressed"] is True
-        # Token count should decrease even if message count stays similar
-        # (evicted messages replaced by short summary placeholders)
+        # Token count should decrease (atoms silently evicted, no markers)
         assert stats["tokens_after"] < stats["tokens_before"]
 
     def test_preserves_system_prompt(self):
@@ -159,16 +155,21 @@ class TestEvict:
 # ---------------------------------------------------------------------------
 
 class TestMerge:
-    def test_merge_chunks_old_messages(self):
-        """Aggressive profile uses merge, producing summary messages."""
+    def test_merge_reduces_messages(self):
+        """Aggressive profile uses merge, silently dropping low-value atoms."""
         accordion = MessageAccordion(profile="aggressive")
         # aggressive recent_window = 6
         msgs = _make_conversation(n_old=30, n_recent=6)
         compressed, stats = accordion.compress(msgs, model="gpt-4")
         assert stats["compressed"] is True
-        # Merged messages contain the marker
-        merged = [m for m in compressed if "[Merged" in m.get("content", "")]
-        assert len(merged) >= 1
+        # Silent eviction: fewer messages, no injected markers
+        assert stats["messages_after"] < stats["messages_before"]
+        assert stats["tokens_after"] < stats["tokens_before"]
+        # No CONTEXT markers should be present
+        for m in compressed:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                assert "[CONTEXT:" not in content
 
 
 # ---------------------------------------------------------------------------

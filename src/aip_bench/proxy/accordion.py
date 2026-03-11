@@ -2,37 +2,23 @@
 MessageAccordion: message compression engine for LLM proxy.
 
 Implements the Accordion pattern (batch -> flush -> compress) for chat messages.
-Scores messages by importance, then evicts or merges low-value ones to reduce
-input token count while preserving conversation quality.
+Groups messages into atomic units (user/assistant pairs or tool-call/tool-result
+sequences), scores atoms by importance, then silently evicts or merges low-value
+atoms to reduce input token count while preserving conversation quality and
+strict role alternation required by Anthropic and OpenAI APIs.
 """
-
-# Context window sizes for known models (tokens)
-MODEL_CONTEXTS = {
-    "claude-sonnet-4-5-20250929": 200_000,
-    "claude-3-5-sonnet-20241022": 200_000,
-    "claude-opus-4-20250514": 200_000,
-    "claude-3-opus-20240229": 200_000,
-    "claude-3-haiku-20240307": 200_000,
-    "gpt-4o": 128_000,
-    "gpt-4o-mini": 128_000,
-    "gpt-4-turbo": 128_000,
-    "gpt-4": 8_192,
-    "gpt-3.5-turbo": 16_385,
-    "llama3": 8_192,
-    "mistral": 32_000,
-}
 
 PROFILES = {
     "conservative": {
-        "min_tokens": 8_000,    # Compress when >8K tokens (absolute)
+        "min_tokens": 8_000,
         "keep_ratio": 0.85,
         "recent_window": 20,
         "method": "evict",
         "max_msg_tokens": 8192,
-        "max_system_tokens": 0, # 0 = no system compression
+        "max_system_tokens": 0,
     },
     "balanced": {
-        "min_tokens": 5_000,    # Compress when >5K tokens
+        "min_tokens": 5_000,
         "keep_ratio": 0.60,
         "recent_window": 12,
         "method": "evict",
@@ -40,7 +26,7 @@ PROFILES = {
         "max_system_tokens": 4096,
     },
     "aggressive": {
-        "min_tokens": 2_000,    # Compress when >2K tokens
+        "min_tokens": 2_000,
         "keep_ratio": 0.35,
         "recent_window": 6,
         "method": "merge",
@@ -53,6 +39,21 @@ ROLE_WEIGHTS = {"user": 0.5, "assistant": 0.2, "system": 1.0}
 ERROR_KEYWORDS = ["error", "traceback", "failed", "exception", "panic"]
 
 
+def estimate_tokens(messages):
+    """Estimate token count for a list of messages (~4 chars per token)."""
+    total = 0
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, list):
+            text = " ".join(
+                str(block.get("text", "")) for block in content if isinstance(block, dict)
+            )
+            total += len(text) // 4
+        else:
+            total += len(str(content)) // 4
+    return max(total, 1)
+
+
 def _jaccard_similarity(text1, text2):
     """Compute token-based Jaccard similarity between two strings."""
     s1 = set(str(text1).lower().split())
@@ -62,12 +63,24 @@ def _jaccard_similarity(text1, text2):
     return len(s1 & s2) / len(s1 | s2)
 
 
+def _is_tool_message(m):
+    """Return True if `m` is part of a tool-call/tool-result exchange."""
+    if m.get("role") == "tool" or m.get("tool_calls") or m.get("tool_call_id"):
+        return True
+    content = m.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
+                return True
+    return False
+
+
 class MessageAccordion:
     """Compress chat messages using the Accordion pattern.
 
-    Accumulates messages, scores them by importance, and compresses
-    by evicting or merging low-value messages while preserving recent
-    context and system prompts.
+    Groups messages into atomic units, scores them by importance, and
+    silently evicts or merges low-value atoms while preserving recent
+    context, system prompts, and strict role alternation.
     """
 
     def __init__(self, profile="balanced"):
@@ -79,13 +92,27 @@ class MessageAccordion:
         self.profile_name = profile
         self.stats = None  # Set externally or via CompressionStats
 
-    def compress(self, messages, provider, model=None):
+    # ------------------------------------------------------------------
+    # Token counting helper
+    # ------------------------------------------------------------------
+
+    def _count_tokens(self, messages, provider, model):
+        """Count tokens using provider if available, else estimate."""
+        if provider is not None:
+            return provider.count_tokens(messages, model)
+        return estimate_tokens(messages)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def compress(self, messages, provider=None, model=None):
         """Compress a list of messages according to the active profile.
 
         Args:
             messages: List of message dicts with 'role' and 'content'.
-            provider: Provider instance for token counting (Point 1).
-            model: Optional model name for context window lookup.
+            provider: Optional provider instance for accurate token counting.
+            model: Optional model name.
 
         Returns:
             (compressed_messages, stats_dict)
@@ -95,10 +122,10 @@ class MessageAccordion:
 
         model = model or "claude-3-5-sonnet-20241022"
 
-        # 1. Truncate individual messages using unified provider counting (Point 2)
+        # 1. Truncate individual messages
         messages = self._truncate_messages(messages, provider, model)
 
-        tokens_before = provider.count_tokens(messages, model)
+        tokens_before = self._count_tokens(messages, provider, model)
 
         # Check absolute token threshold
         if tokens_before < self.profile["min_tokens"]:
@@ -117,9 +144,8 @@ class MessageAccordion:
             system = self._compress_system(system, provider, model, max_sys)
 
         if not old:
-            # Nothing to compress in conversation, but system may have been compressed
             result = system + recent
-            tokens_after = provider.count_tokens(result, model)
+            tokens_after = self._count_tokens(result, provider, model)
             if tokens_after < tokens_before:
                 stats = self._build_stats(tokens_before, tokens_after, len(messages), len(result))
                 return result, stats
@@ -129,48 +155,201 @@ class MessageAccordion:
                 "tokens_after": tokens_before,
             }
 
-        # 2. Score old messages with role-specific redundancy check (Point 3)
-        scores = []
-        last_seen = {}  # Store last message content per role
-        
-        for m in old:
-            role = m.get("role")
-            score = self._score(m)
-            
-            # Semantic redundancy check (Point 3: detect ping-pong patterns)
-            current_content = self._get_text_content(m)
-            if role in last_seen:
-                similarity = _jaccard_similarity(current_content, last_seen[role])
-                if similarity > 0.8:
-                    score *= 0.5  # Heavy penalty for repetition within role
-            
-            last_seen[role] = current_content
-            scores.append(score)
+        # 2. Build atoms from old messages
+        atoms = self._make_atoms(old)
 
-        # Apply compression strategy
+        # 3. Score atoms with role-specific redundancy check
+        atom_scores = []
+        last_seen = {}
+        for atom in atoms:
+            score = self._score_atom(atom)
+            # Semantic redundancy: compare representative text per role
+            for m in atom:
+                role = m.get("role")
+                current_content = self._get_text_content(m)
+                if role in last_seen:
+                    similarity = _jaccard_similarity(current_content, last_seen[role])
+                    if similarity > 0.8:
+                        score *= 0.5
+                        break
+                last_seen[role] = current_content
+            atom_scores.append(score)
+
+        # 4. Apply compression strategy (operates on atoms)
         if self.profile["method"] == "merge":
-            compressed_old = self._merge(old, scores)
+            compressed_atoms = self._merge(atoms, atom_scores)
         else:
-            compressed_old = self._evict(old, scores)
+            compressed_atoms = self._evict(atoms, atom_scores)
+
+        # 5. Flatten atoms back to messages
+        compressed_old = [m for atom in compressed_atoms for m in atom]
+
+        # 6. Consolidate consecutive same-role messages
+        compressed_old = self._consolidate_roles(compressed_old)
 
         # Reconstruct
         result = system + compressed_old + recent
-        tokens_after = provider.count_tokens(result, model)
+        tokens_after = self._count_tokens(result, provider, model)
 
-        stats = self._build_stats(tokens_before, tokens_after, len(messages), len(result))
+        n_result = len(result)
+        stats = self._build_stats(tokens_before, tokens_after, len(messages), n_result)
         return result, stats
 
+    # ------------------------------------------------------------------
+    # Atom construction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_atoms(messages):
+        """Group a flat list of messages into atomic units.
+
+        * A tool atom: [assistant(tool_calls/tool_use), tool/user(tool_result)]
+        * A normal atom: [user, assistant] pair (or single message if unpaired)
+
+        Atoms are indivisible — eviction/merge operates on whole atoms.
+        """
+        atoms = []
+        i = 0
+        n = len(messages)
+        while i < n:
+            msg = messages[i]
+            # Detect tool-call initiator (assistant with tool_calls or tool_use blocks)
+            if msg.get("role") == "assistant" and _is_tool_message(msg):
+                atom = [msg]
+                i += 1
+                # Collect all subsequent tool-response messages
+                while i < n and _is_tool_message(messages[i]) and messages[i].get("role") != "assistant":
+                    atom.append(messages[i])
+                    i += 1
+                atoms.append(atom)
+                continue
+
+            # Normal pair: try to group [user, assistant]
+            if msg.get("role") == "user" and i + 1 < n and messages[i + 1].get("role") == "assistant":
+                # Only pair if neither is a tool message
+                if not _is_tool_message(msg) and not _is_tool_message(messages[i + 1]):
+                    atoms.append([msg, messages[i + 1]])
+                    i += 2
+                    continue
+
+            # Single message atom (fallback)
+            atoms.append([msg])
+            i += 1
+
+        return atoms
+
+    # ------------------------------------------------------------------
+    # Scoring
+    # ------------------------------------------------------------------
+
+    def _score_atom(self, atom):
+        """Score an atom's importance (max score of its messages)."""
+        return max(self._score(m) for m in atom)
+
+    def _score(self, message):
+        """Score message importance."""
+        if _is_tool_message(message):
+            return 1.0
+
+        score = 0.0
+        content = self._get_text_content(message)
+
+        score += ROLE_WEIGHTS.get(message.get("role", ""), 0.1)
+
+        if "```" in content:
+            score += 0.3
+
+        score += min(len(content) / 2000, 0.2)
+
+        if any(kw in content.lower() for kw in ERROR_KEYWORDS):
+            score += 0.2
+
+        return min(score, 1.0)
+
+    def _get_text_content(self, message):
+        """Flatten message content to string."""
+        content = message.get("content", "")
+        if isinstance(content, list):
+            return " ".join(
+                str(b.get("text", "")) for b in content if isinstance(b, dict)
+            )
+        return str(content)
+
+    # ------------------------------------------------------------------
+    # Eviction (silent — no markers injected)
+    # ------------------------------------------------------------------
+
+    def _evict(self, atoms, scores):
+        """Silently remove lowest-scoring atoms, preserving order."""
+        keep_count = max(1, int(len(atoms) * self.profile["keep_ratio"]))
+        if keep_count >= len(atoms):
+            return list(atoms)
+
+        indexed = sorted(enumerate(scores), key=lambda x: x[1])
+        to_remove = len(atoms) - keep_count
+        remove_indices = {indexed[i][0] for i in range(to_remove)}
+
+        return [atom for i, atom in enumerate(atoms) if i not in remove_indices]
+
+    # ------------------------------------------------------------------
+    # Merge (silent — no markers injected)
+    # ------------------------------------------------------------------
+
+    def _merge(self, atoms, scores):
+        """Keep only highest-scoring atoms per chunk, silently dropping rest."""
+        chunk_size = max(2, len(atoms) // 3)
+        result = []
+        for i in range(0, len(atoms), chunk_size):
+            chunk = atoms[i : i + chunk_size]
+            c_scores = scores[i : i + chunk_size]
+
+            if len(chunk) == 1:
+                result.extend(chunk)
+                continue
+
+            # Keep the best-scoring atom, silently drop the rest
+            best_idx = max(range(len(c_scores)), key=lambda j: c_scores[j])
+            result.append(chunk[best_idx])
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Role consolidation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _consolidate_roles(messages):
+        """Merge consecutive same-role messages, preserving tool integrity.
+
+        After silent eviction, two consecutive messages may share the same role.
+        This concatenates their content with \\n\\n — EXCEPT when either message
+        contains tool_calls, tool_use, tool_result, or has role 'tool'.
+        """
+        if not messages:
+            return messages
+
+        result = [messages[0]]
+        for msg in messages[1:]:
+            prev = result[-1]
+            if msg.get("role") == prev.get("role") and not _is_tool_message(msg) and not _is_tool_message(prev):
+                result[-1] = _merge_content(prev, msg)
+            else:
+                result.append(msg)
+        return result
+
+    # ------------------------------------------------------------------
+    # Truncation helpers
+    # ------------------------------------------------------------------
+
     def _truncate_messages(self, messages, provider, model):
-        """Truncate individual non-system messages using unified counting (Point 2)."""
+        """Truncate individual non-system messages."""
         max_tokens = self.profile["max_msg_tokens"]
         result = []
         for m in messages:
             if m.get("role") == "system":
                 result.append(m)
                 continue
-            
-            # Use provider's exact count for this message alone
-            tokens = provider.count_tokens([m], model)
+            tokens = self._count_tokens([m], provider, model)
             if tokens > max_tokens:
                 m = dict(m)
                 m["content"] = self._do_truncate(m.get("content", ""), max_tokens)
@@ -206,112 +385,13 @@ class MessageAccordion:
         return system, old, recent
 
     def _compress_system(self, system_msgs, provider, model, max_tokens):
-        """Truncate system messages using unified counting (Point 2)."""
+        """Truncate system messages that exceed the budget."""
         result = []
         for m in system_msgs:
-            if provider.count_tokens([m], model) > max_tokens:
+            if self._count_tokens([m], provider, model) > max_tokens:
                 m = dict(m)
                 m["content"] = self._do_truncate(m.get("content", ""), max_tokens)
             result.append(m)
-        return result
-
-    def _score(self, message):
-        """Score message importance (Point 5: higher user importance)."""
-        if message.get("role") == "tool" or message.get("tool_calls") or message.get("tool_call_id"):
-            return 1.0
-
-        score = 0.0
-        content = self._get_text_content(message)
-
-        # Role weight (Point 5: User gets a floor of 0.5)
-        score += ROLE_WEIGHTS.get(message.get("role", ""), 0.1)
-
-        # Code blocks increase importance
-        if "```" in content:
-            score += 0.3
-
-        # Length bonus
-        score += min(len(content) / 2000, 0.2)
-
-        # Error keywords
-        if any(kw in content.lower() for kw in ERROR_KEYWORDS):
-            score += 0.2
-
-        return min(score, 1.0)
-
-    def _get_text_content(self, message):
-        """Flatten message content to string."""
-        content = message.get("content", "")
-        if isinstance(content, list):
-            return " ".join(
-                str(b.get("text", "")) for b in content if isinstance(b, dict)
-            )
-        return str(content)
-
-    def _evict(self, old, scores):
-        """Remove lowest-scoring messages preserving order (Point 4: API-safe role)."""
-        keep_count = max(1, int(len(old) * self.profile["keep_ratio"]))
-        if keep_count >= len(old):
-            return list(old)
-
-        indexed = list(enumerate(zip(old, scores)))
-        indexed.sort(key=lambda x: x[1][1])
-
-        to_remove = len(old) - keep_count
-        remove_indices = {indexed[i][0] for i in range(to_remove)}
-
-        result = []
-        removed_count = 0
-        for i, m in enumerate(old):
-            if i in remove_indices:
-                removed_count += 1
-            else:
-                if removed_count > 0:
-                    # Using 'user' role with bracketed prefix for maximum API compatibility
-                    result.append({
-                        "role": "user",
-                        "content": f"[CONTEXT: {removed_count} message(s) omitted for brevity]",
-                    })
-                    removed_count = 0
-                result.append(m)
-
-        if removed_count > 0:
-            result.append({
-                "role": "user", 
-                "content": f"[CONTEXT: {removed_count} message(s) omitted for brevity]",
-            })
-        return result
-
-    def _merge(self, old, scores):
-        """Merge old messages, preserving high-scoring ones (Point 4: API-safe role)."""
-        chunk_size = max(2, len(old) // 3)
-        chunks = []
-        chunk_scores = []
-        for i in range(0, len(old), chunk_size):
-            chunks.append(old[i : i + chunk_size])
-            chunk_scores.append(scores[i : i + chunk_size])
-
-        result = []
-        for chunk, c_scores in zip(chunks, chunk_scores):
-            # If any message in the chunk is a tool/call, keep verbatim (atomic)
-            has_tool = any(
-                m.get("role") == "tool" or m.get("tool_calls") or m.get("tool_call_id")
-                for m in chunk
-            )
-            if len(chunk) == 1 or has_tool:
-                result.extend(chunk)
-                continue
-
-            best_idx = max(range(len(c_scores)), key=lambda j: c_scores[j])
-            best_msg = chunk[best_idx]
-
-            # Using 'user' role for summary to avoid mid-conversation system role errors
-            rest_count = len(chunk) - 1
-            summary_content = f"[CONTEXT: {rest_count} previous message(s) merged for brevity here]"
-            
-            result.append(best_msg)
-            result.append({"role": "user", "content": summary_content})
-
         return result
 
     def _build_stats(self, before, after, n_before, n_after):
@@ -353,3 +433,24 @@ class MessageAccordion:
             remaining -= len(block["text"])
             result.append(block)
         return result
+
+
+# ------------------------------------------------------------------
+# Module-level helpers
+# ------------------------------------------------------------------
+
+def _merge_content(msg_a, msg_b):
+    """Merge two same-role messages into one, concatenating content."""
+    merged = dict(msg_a)
+    a = msg_a.get("content", "")
+    b = msg_b.get("content", "")
+
+    if isinstance(a, list) and isinstance(b, list):
+        merged["content"] = a + b
+    elif isinstance(a, list):
+        merged["content"] = a + [{"type": "text", "text": str(b)}]
+    elif isinstance(b, list):
+        merged["content"] = [{"type": "text", "text": str(a)}] + b
+    else:
+        merged["content"] = str(a) + "\n\n" + str(b)
+    return merged
