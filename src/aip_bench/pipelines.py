@@ -357,7 +357,8 @@ class MultipleChoiceBenchmark:
         self.n_shots = n_shots
         self.examples = examples
 
-    def run(self):
+    def run(self, max_workers=1):
+        from concurrent.futures import ThreadPoolExecutor
         from aip_bench.models import DummyModel
         from aip_bench.prompts import format_prompt
 
@@ -366,18 +367,27 @@ class MultipleChoiceBenchmark:
         if self.data is None:
             self.data = _synthetic_mc(50)
 
-        predictions = []
-        references = []
+        predictions = [None] * len(self.data)
+        references = [None] * len(self.data)
 
-        for item in _progress(self.data, desc=self.task):
+        def _process_item(i):
+            item = self.data[i]
             prompt = format_prompt(
                 self.task, item,
                 n_shots=self.n_shots, examples=self.examples,
             )
             choices = item.get("choices", ["A", "B", "C", "D"])
             pred_idx = self.model.classify(prompt, choices)
-            predictions.append(pred_idx)
-            references.append(item.get("answer_idx", 0))
+            predictions[i] = pred_idx
+            references[i] = item.get("answer_idx", 0)
+
+        if max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                list(_progress(executor.map(_process_item, range(len(self.data))), 
+                               desc=self.task, total=len(self.data)))
+        else:
+            for i in _progress(range(len(self.data)), desc=self.task):
+                _process_item(i)
 
         predictions = np.array(predictions)
         references = np.array(references)
@@ -420,7 +430,8 @@ class MathBenchmark:
         self.n_shots = n_shots
         self.examples = examples
 
-    def run(self):
+    def run(self, max_workers=1):
+        from concurrent.futures import ThreadPoolExecutor
         from aip_bench.models import DummyModel
         from aip_bench.prompts import format_prompt
 
@@ -429,19 +440,26 @@ class MathBenchmark:
         if self.data is None:
             self.data = _synthetic_math(50)
 
-        predictions = []
-        references = []
+        predictions = [None] * len(self.data)
+        references = [None] * len(self.data)
 
-        for item in _progress(self.data, desc=self.task):
+        def _process_item(i):
+            item = self.data[i]
             prompt = format_prompt(
                 self.task, item,
                 n_shots=self.n_shots, examples=self.examples,
             )
             response = self.model.generate(prompt)
-            pred_num = _extract_number(response)
-            ref_num = _extract_number(str(item.get("answer", "")))
-            predictions.append(pred_num)
-            references.append(ref_num)
+            predictions[i] = _extract_number(response)
+            references[i] = _extract_number(str(item.get("answer", "")))
+
+        if max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                list(_progress(executor.map(_process_item, range(len(self.data))), 
+                               desc=self.task, total=len(self.data)))
+        else:
+            for i in _progress(range(len(self.data)), desc=self.task):
+                _process_item(i)
 
         correct = sum(1 for p, r in zip(predictions, references) if p == r)
         total = len(predictions)
@@ -482,7 +500,8 @@ class FactVerificationBenchmark:
         self.n_shots = n_shots
         self.examples = examples
 
-    def run(self):
+    def run(self, max_workers=1):
+        from concurrent.futures import ThreadPoolExecutor
         from aip_bench.models import DummyModel
         from aip_bench.prompts import format_prompt
 
@@ -492,19 +511,26 @@ class FactVerificationBenchmark:
             self.data = _synthetic_fever(50)
 
         labels_map = {"supports": 0, "refutes": 1, "not enough info": 2}
-        predictions = []
-        references = []
+        predictions = [None] * len(self.data)
+        references = [None] * len(self.data)
 
-        for item in _progress(self.data, desc=self.task):
+        def _process_item(i):
+            item = self.data[i]
             prompt = format_prompt(
                 self.task, item,
                 n_shots=self.n_shots, examples=self.examples,
             )
             response = self.model.generate(prompt).strip().lower()
-            pred = _classify_verdict(response)
-            ref = labels_map.get(str(item.get("label", "")).lower(), 2)
-            predictions.append(pred)
-            references.append(ref)
+            predictions[i] = _classify_verdict(response)
+            references[i] = labels_map.get(str(item.get("label", "")).lower(), 2)
+
+        if max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                list(_progress(executor.map(_process_item, range(len(self.data))), 
+                               desc=self.task, total=len(self.data)))
+        else:
+            for i in _progress(range(len(self.data)), desc=self.task):
+                _process_item(i)
 
         predictions = np.array(predictions)
         references = np.array(references)
@@ -547,7 +573,8 @@ class OpenDomainQABenchmark:
         self.n_shots = n_shots
         self.examples = examples
 
-    def run(self):
+    def run(self, max_workers=1):
+        from concurrent.futures import ThreadPoolExecutor
         from aip_bench.models import DummyModel
         from aip_bench.prompts import format_prompt
 
@@ -556,17 +583,26 @@ class OpenDomainQABenchmark:
         if self.data is None:
             self.data = _synthetic_open_qa(50)
 
-        predictions = []
-        references = []
+        predictions = [None] * len(self.data)
+        references = [None] * len(self.data)
 
-        for item in _progress(self.data, desc=self.task):
+        def _process_item(i):
+            item = self.data[i]
             prompt = format_prompt(
                 self.task, item,
                 n_shots=self.n_shots, examples=self.examples,
             )
             response = self.model.generate(prompt).strip()
-            predictions.append(response)
-            references.append(str(item.get("answer", "")))
+            predictions[i] = response
+            references[i] = str(item.get("answer", ""))
+
+        if max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                list(_progress(executor.map(_process_item, range(len(self.data))), 
+                               desc=self.task, total=len(self.data)))
+        else:
+            for i in _progress(range(len(self.data)), desc=self.task):
+                _process_item(i)
 
         em = exact_match(predictions, references)
         qam = qa_metrics(predictions, references)

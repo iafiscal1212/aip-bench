@@ -10,7 +10,6 @@ import logging
 import urllib.request
 import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from functools import partial
 
 from .accordion import MessageAccordion
 from .providers import detect_provider
@@ -35,7 +34,6 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         accordion = self.server.accordion
         stats = self.server.proxy_stats
         target = self.server.target
-        verbose = self.server.verbose
 
         # Read body
         content_length = int(self.headers.get("Content-Length", 0))
@@ -50,6 +48,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             pass
 
         provider = detect_provider(self.path, dict(self.headers))
+        logger.debug("[%s] %s → provider=%s", self.command, self.path, provider.name)
 
         if body is not None:
             messages = provider.extract_messages(body)
@@ -63,8 +62,8 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     before = comp_stats.get("tokens_before", 0)
                     pct = (saved / before * 100) if before > 0 else 0
                     logger.info(
-                        f"[{provider.name}] Compressed: {before} -> "
-                        f"{comp_stats.get('tokens_after', 0)} tokens ({pct:.1f}% saved)"
+                        "[%s] Compressed: %d → %d tokens (%.1f%% saved)",
+                        provider.name, before, comp_stats.get("tokens_after", 0), pct,
                     )
                 else:
                     stats.record_passthrough()
@@ -95,6 +94,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req) as resp:
                 resp_body = resp.read()
+                logger.debug("[%s] Upstream %d OK", provider.name, resp.status)
                 self.send_response(resp.status)
                 for key, val in resp.getheaders():
                     if key.lower() not in ("transfer-encoding", "connection"):
@@ -103,11 +103,17 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 self.wfile.write(resp_body)
         except urllib.error.HTTPError as e:
             resp_body = e.read()
+            try:
+                err_text = resp_body.decode("utf-8", errors="replace")
+            except Exception:
+                err_text = "<unreadable>"
+            logger.error("[%s] Upstream error %d: %s", provider.name, e.code, err_text[:1000])
             self.send_response(e.code)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(resp_body)
         except urllib.error.URLError as e:
+            logger.error("Upstream connection failed: %s", e.reason)
             self._send_json(502, {"error": f"Upstream connection failed: {e.reason}"})
 
     def _send_json(self, status, data):
@@ -119,7 +125,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format, *args):
-        logger.debug(f"{self.address_string()} - {format % args}")
+        logger.debug("%s - " + format, self.address_string(), *args)
 
 
 class StdlibProxyServer:
@@ -128,7 +134,7 @@ class StdlibProxyServer:
     Note: does not support SSE streaming (buffers full response).
     """
 
-    def __init__(self, port=8080, profile="balanced", target=None, verbose=False):
+    def __init__(self, port=8080, profile="balanced", target=None, verbose=True):
         self.port = port
         self.target = target
         self.verbose = verbose
@@ -145,11 +151,11 @@ class StdlibProxyServer:
 
         logging.basicConfig(
             level=logging.DEBUG if self.verbose else logging.INFO,
-            format="%(asctime)s [%(name)s] %(message)s",
+            format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
         )
         logger.info(
-            f"aip-proxy (stdlib) starting on port {self.port} "
-            f"(profile={self.accordion.profile_name}, target={self.target or 'auto'})"
+            "aip-proxy (stdlib) starting on port %d (profile=%s, target=%s)",
+            self.port, self.accordion.profile_name, self.target or "auto",
         )
         logger.info("Note: stdlib server does not support SSE streaming")
         try:
@@ -159,4 +165,4 @@ class StdlibProxyServer:
         finally:
             server.server_close()
             summary = self.stats.summary()
-            logger.info(f"Session summary: {summary}")
+            logger.info("Session summary: %s", summary)

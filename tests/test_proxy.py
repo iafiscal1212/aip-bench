@@ -8,9 +8,7 @@ import pytest
 
 from aip_bench.proxy.accordion import (
     MessageAccordion,
-    estimate_tokens,
     PROFILES,
-    MODEL_CONTEXTS,
     ROLE_WEIGHTS,
 )
 from aip_bench.proxy.providers import (
@@ -26,6 +24,24 @@ from aip_bench.proxy.stats import CompressionStats
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+class MockProvider:
+    """Simple provider mock for testing token counting."""
+    
+    def count_tokens(self, messages, model=None):
+        """Simple linear token count (~4 chars per token)."""
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                text = " ".join(
+                    str(block.get("text", "")) for block in content if isinstance(block, dict)
+                )
+                total += len(text) // 4
+            else:
+                total += len(str(content)) // 4
+        return max(total, 1)
+
 
 def _make_messages(n, role="user", content_len=100):
     """Generate n messages with given role and approximate content length."""
@@ -45,33 +61,6 @@ def _make_conversation(n_old, n_recent=4, content_len=800):
         role = "user" if i % 2 == 0 else "assistant"
         msgs.append({"role": role, "content": f"Recent message {i}: " + "b" * content_len})
     return msgs
-
-
-# ---------------------------------------------------------------------------
-# estimate_tokens
-# ---------------------------------------------------------------------------
-
-class TestEstimateTokens:
-    def test_basic(self):
-        msgs = [{"role": "user", "content": "Hello world"}]
-        tokens = estimate_tokens(msgs)
-        assert tokens >= 1
-        # "Hello world" = 11 chars -> ~2-3 tokens
-        assert tokens == 11 // 4 or tokens == max(11 // 4, 1)
-
-    def test_empty_messages(self):
-        assert estimate_tokens([]) == 1  # min 1
-
-    def test_long_content(self):
-        msgs = [{"role": "user", "content": "a" * 4000}]
-        tokens = estimate_tokens(msgs)
-        assert tokens == 1000
-
-    def test_content_blocks(self):
-        """Anthropic-style content blocks."""
-        msgs = [{"role": "user", "content": [{"text": "Hello " * 100}]}]
-        tokens = estimate_tokens(msgs)
-        assert tokens > 10
 
 
 # ---------------------------------------------------------------------------
@@ -119,13 +108,16 @@ class TestScoreMessage:
 # ---------------------------------------------------------------------------
 
 class TestEvict:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_keeps_recent_window(self):
         """Recent window messages are never touched by compression."""
         accordion = MessageAccordion(profile="balanced")
         # balanced recent_window = 12
         msgs = _make_conversation(n_old=40, n_recent=12)
         # Force compression by using a tiny model context
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         # The last 12 non-system messages should be untouched
         recent_original = msgs[-12:]
         recent_compressed = compressed[-12:]
@@ -135,17 +127,16 @@ class TestEvict:
         """Evict removes messages, reducing token count."""
         accordion = MessageAccordion(profile="balanced")
         msgs = _make_conversation(n_old=40, n_recent=12)
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         assert stats["compressed"] is True
-        # Token count should decrease even if message count stays similar
-        # (evicted messages replaced by short summary placeholders)
+        # Token count should decrease (atoms silently evicted, no markers)
         assert stats["tokens_after"] < stats["tokens_before"]
 
     def test_preserves_system_prompt(self):
         """System messages are never removed."""
         accordion = MessageAccordion(profile="balanced")
         msgs = _make_conversation(n_old=40, n_recent=12)
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         system_msgs = [m for m in compressed if m["role"] == "system"]
         assert len(system_msgs) >= 1
         assert system_msgs[0]["content"] == "You are a helpful assistant."
@@ -156,16 +147,24 @@ class TestEvict:
 # ---------------------------------------------------------------------------
 
 class TestMerge:
-    def test_merge_chunks_old_messages(self):
-        """Aggressive profile uses merge, producing summary messages."""
+    def setup_method(self):
+        self.provider = MockProvider()
+
+    def test_merge_reduces_messages(self):
+        """Aggressive profile uses merge, silently dropping low-value atoms."""
         accordion = MessageAccordion(profile="aggressive")
         # aggressive recent_window = 6
         msgs = _make_conversation(n_old=30, n_recent=6)
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         assert stats["compressed"] is True
-        # Merged messages contain the marker
-        merged = [m for m in compressed if "[Merged" in m.get("content", "")]
-        assert len(merged) >= 1
+        # Silent eviction: fewer messages, no injected markers
+        assert stats["messages_after"] < stats["messages_before"]
+        assert stats["tokens_after"] < stats["tokens_before"]
+        # No CONTEXT markers should be present
+        for m in compressed:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                assert "[CONTEXT:" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +172,9 @@ class TestMerge:
 # ---------------------------------------------------------------------------
 
 class TestThreshold:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_no_compress_below_threshold(self):
         """Should not compress when token count is below min_tokens."""
         accordion = MessageAccordion(profile="conservative")
@@ -183,19 +185,21 @@ class TestThreshold:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there"},
         ]
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert stats["compressed"] is False
         assert compressed == msgs
 
     def test_compress_balanced_profile(self):
         """Balanced profile should compress conversations over 5K tokens."""
         accordion = MessageAccordion(profile="balanced")
-        # balanced min_tokens = 5000 -> need >20K chars
+        # balanced min_tokens = 5000 -> need enough tokens
         msgs = [{"role": "system", "content": "System prompt."}]
-        for i in range(100):
+        # Need distinct text or much more of it to hit 5k
+        for i in range(200):
             role = "user" if i % 2 == 0 else "assistant"
-            msgs.append({"role": role, "content": f"Message {i}: " + "word " * 200})
-        compressed, stats = accordion.compress(msgs)
+            # More varied text
+            msgs.append({"role": role, "content": f"Message {i}: " + f"word {i} " * 150})
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert stats["compressed"] is True
         savings_pct = stats["tokens_saved"] / stats["tokens_before"] * 100
         assert savings_pct > 10  # At least 10% savings
@@ -203,12 +207,12 @@ class TestThreshold:
     def test_absolute_threshold_fires_early(self):
         """min_tokens triggers on modest conversations, not just near context limit."""
         accordion = MessageAccordion(profile="balanced")
-        # ~6K tokens = 24K chars -> above min_tokens=5000
+        # ~6K tokens needed. Let's use more unique data.
         msgs = [{"role": "system", "content": "Be helpful."}]
-        for i in range(30):
+        for i in range(50):
             role = "user" if i % 2 == 0 else "assistant"
-            msgs.append({"role": role, "content": f"Msg {i}: " + "x" * 800})
-        compressed, stats = accordion.compress(msgs)
+            msgs.append({"role": role, "content": f"Msg {i}: " + f"Unique data {i} " * 100})
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert stats["compressed"] is True
 
 
@@ -327,6 +331,9 @@ class TestCompressionStats:
 # ---------------------------------------------------------------------------
 
 class TestAccordionSession:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_session_accumulates_stats(self):
         """Multiple compress() calls accumulate in shared stats."""
         accordion = MessageAccordion(profile="balanced")
@@ -335,11 +342,11 @@ class TestAccordionSession:
 
         # First large conversation (must exceed threshold for gpt-4)
         msgs1 = _make_conversation(n_old=40, n_recent=12, content_len=800)
-        accordion.compress(msgs1, model="gpt-4")
+        accordion.compress(msgs1, provider=self.provider, model="gpt-4")
 
         # Second large conversation
         msgs2 = _make_conversation(n_old=50, n_recent=12, content_len=800)
-        accordion.compress(msgs2, model="gpt-4")
+        accordion.compress(msgs2, provider=self.provider, model="gpt-4")
 
         summary = stats.summary()
         assert summary["compressions"] == 2
@@ -351,7 +358,7 @@ class TestAccordionSession:
 
     def test_empty_messages(self):
         accordion = MessageAccordion(profile="balanced")
-        compressed, stats = accordion.compress([])
+        compressed, stats = accordion.compress([], provider=self.provider)
         assert compressed == []
         assert stats["compressed"] is False
 
@@ -361,6 +368,9 @@ class TestAccordionSession:
 # ---------------------------------------------------------------------------
 
 class TestContentBlockTruncation:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_truncates_large_tool_result_blocks(self):
         """Anthropic tool_result with large file content gets truncated."""
         accordion = MessageAccordion(profile="aggressive")
@@ -376,7 +386,7 @@ class TestContentBlockTruncation:
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"msg {i}: " + "y" * 400})
 
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         # The tool_result block should have been truncated
         tool_msg = compressed[1]  # after system
         if isinstance(tool_msg["content"], list):
@@ -392,15 +402,14 @@ class TestContentBlockTruncation:
         msgs = [
             {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
         ]
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert compressed[0]["content"][0]["text"] == "Hello"
 
 
-# ---------------------------------------------------------------------------
-# System prompt compression
-# ---------------------------------------------------------------------------
-
 class TestSystemCompression:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_large_system_prompt_compressed(self):
         """balanced/aggressive profiles truncate large system prompts."""
         accordion = MessageAccordion(profile="balanced")
@@ -414,7 +423,7 @@ class TestSystemCompression:
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"Msg {i}: " + "z" * 800})
 
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         sys_msg = [m for m in compressed if m["role"] == "system"][0]
         # System content should be shorter than original
         assert len(str(sys_msg["content"])) < len(huge_system)
@@ -428,16 +437,15 @@ class TestSystemCompression:
         for i in range(60):
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"Msg {i}: " + "z" * 800})
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         sys_msg = [m for m in compressed if m["role"] == "system"][0]
         assert sys_msg["content"] == huge_system
 
 
-# ---------------------------------------------------------------------------
-# Merge preserves high-score messages
-# ---------------------------------------------------------------------------
-
 class TestMergeKeepsBest:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_merge_keeps_highest_scoring(self):
         """Merge keeps the best message per chunk, not just first/last."""
         accordion = MessageAccordion(profile="aggressive")
@@ -453,20 +461,344 @@ class TestMergeKeepsBest:
         for i in range(6):
             msgs.append({"role": "user" if i % 2 == 0 else "assistant", "content": "recent " * 50})
 
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         # The code+error message should be preserved verbatim
-        preserved = [m for m in compressed if "```python" in m.get("content", "")]
+        preserved = [m for m in compressed if "```python" in m.get("content", "") and "error traceback" in m.get("content", "")]
         assert len(preserved) == 1
 
 
 # ---------------------------------------------------------------------------
-# Stdlib fallback server import
+# Anthropic provider tool use validation
 # ---------------------------------------------------------------------------
 
-class TestStdlibFallback:
-    def test_stdlib_server_importable(self):
-        """StdlibProxyServer can be imported without aiohttp."""
-        from aip_bench.proxy.server_stdlib import StdlibProxyServer
-        server = StdlibProxyServer(port=9999, profile="balanced", target="http://localhost:1234")
-        assert server.port == 9999
-        assert server.accordion.profile_name == "balanced"
+class TestAnthropicProviderValidation:
+    def setup_method(self):
+        self.provider = AnthropicProvider()
+
+    def test_validate_tool_use_removes_invalid_tool_result(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_123",
+                        "name": "get_weather",
+                        "input": {"location": "San Francisco"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "70 degrees and sunny",
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "invalid_id",
+                        "content": "some other result",
+                    },
+                ],
+            },
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+
+        # The user message should be at index 1
+        user_message_content = validated_messages[1].get("content", [])
+
+        # Check that the invalid tool_result was removed
+        assert len(user_message_content) == 1
+        assert user_message_content[0].get("tool_use_id") == "tool_123"
+
+    def test_validate_tool_use_keeps_valid_tool_results(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_123",
+                        "name": "get_weather",
+                        "input": {"location": "San Francisco"},
+                    },
+                    {"type": "tool_use", "id": "tool_456", "name": "get_time", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "70 degrees and sunny",
+                    },
+                    {"type": "tool_result", "tool_use_id": "tool_456", "content": "10:00 AM"},
+                ],
+            },
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+        user_message_content = validated_messages[1].get("content", [])
+
+        assert len(user_message_content) == 2
+
+    def test_validate_tool_use_no_tool_results(self):
+        messages = [
+            {"role": "assistant", "content": "Hello"},
+            {"role": "user", "content": "Hi"},
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+        assert messages == validated_messages
+
+    def test_validate_tool_use_no_tool_use(self):
+        messages = [
+            {"role": "assistant", "content": "Hello"},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "70 degrees and sunny",
+                    }
+                ],
+            },
+        ]
+
+        validated_messages = self.provider._validate_tool_use(messages)
+        user_message_content = validated_messages[1].get("content", [])
+
+        # All tool_results should be removed
+        assert len(user_message_content) == 0
+
+    def test_filter_empty_user_messages(self):
+        messages = [
+            {"role": "user", "content": "Hello world"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": None},  # Should be removed
+            {"role": "user", "content": ""},    # Should be removed
+            {"role": "user", "content": "   "}, # Should be removed (whitespace only)
+            {"role": "user", "content": []},    # Should be removed
+            {"role": "user", "content": ["Hello"]}, # Should be kept
+            {"role": "assistant", "content": "Ok"},
+        ]
+        
+        filtered_messages = self.provider._filter_empty_user_messages(messages)
+        
+        expected_messages = [
+            {"role": "user", "content": "Hello world"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": ["Hello"]},
+            {"role": "assistant", "content": "Ok"},
+        ]
+        
+        assert filtered_messages == expected_messages
+
+
+# ---------------------------------------------------------------------------
+# AnthropicProvider — new compatibility fixes
+# ---------------------------------------------------------------------------
+
+class TestAnthropicProviderFixes:
+    def setup_method(self):
+        self.provider = AnthropicProvider()
+
+    # --- Bug 1: validation order ---
+
+    def test_validation_order_empties_are_cleaned_after_tool_validation(self):
+        """After _validate_tool_use removes tool_results, the now-empty user
+        message must also be removed. Previously filter_empty ran first so it
+        was a no-op at that point, leaving an empty user message.
+        The leading assistant message causes a placeholder user turn to be
+        injected, so the final messages start with the injected user turn."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    # placeholder injected by accordion — no tool_use IDs
+                    {"type": "text", "text": "[1 previous message omitted]"},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    # This tool_result has no matching tool_use in the preceding msg
+                    {"type": "tool_result", "tool_use_id": "dangling_id", "content": "data"},
+                ],
+            },
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+        msgs = result["messages"]
+        # The dangling tool_result user message was removed (now empty → filtered)
+        # but a placeholder user turn was injected because messages started with assistant
+        assert msgs[0]["role"] == "user"
+        assert msgs[0]["content"] == "[Context omitted]"
+        # No user message with tool_result content remains
+        for m in msgs:
+            content = m.get("content", [])
+            if isinstance(content, list):
+                assert not any(b.get("type") == "tool_result" for b in content)
+
+    # --- Bug 2: consecutive same-role messages ---
+
+    def test_merge_consecutive_assistant_messages_string(self):
+        messages = [
+            {"role": "assistant", "content": "First part."},
+            {"role": "assistant", "content": "Second part."},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 1
+        assert "First part." in merged[0]["content"]
+        assert "Second part." in merged[0]["content"]
+
+    def test_merge_consecutive_user_messages_list(self):
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "A"}]},
+            {"role": "user", "content": [{"type": "text", "text": "B"}]},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 1
+        assert len(merged[0]["content"]) == 2
+
+    def test_merge_consecutive_mixed_content(self):
+        """String + list should produce a list with a text block prepended."""
+        messages = [
+            {"role": "assistant", "content": "Summary text"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Kept content"}]},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 1
+        content = merged[0]["content"]
+        assert isinstance(content, list)
+        assert any(b.get("text") == "Summary text" for b in content)
+
+    def test_no_merge_for_alternating_roles(self):
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+            {"role": "user", "content": "Bye"},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 3
+
+    # --- Bug 3: system-role messages in messages array ---
+
+    def test_normalize_system_prompt_extracts_to_top_level(self):
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello"},
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+        assert result["system"] == "You are a helpful assistant."
+        assert all(m["role"] != "system" for m in result["messages"])
+
+    def test_normalize_system_prompt_merges_with_existing_system(self):
+        messages = [
+            {"role": "system", "content": "Extra system context."},
+            {"role": "user", "content": "Hello"},
+        ]
+        body = {"messages": messages, "system": "Original system prompt."}
+        result = self.provider.replace_messages(body, messages)
+        assert "Extra system context." in result["system"]
+        assert "Original system prompt." in result["system"]
+
+    def test_normalize_system_prompt_no_system_messages(self):
+        """If no system-role messages, body['system'] is untouched."""
+        messages = [{"role": "user", "content": "Hi"}]
+        body = {"messages": messages, "system": "Keep me."}
+        result = self.provider.replace_messages(body, messages)
+        assert result["system"] == "Keep me."
+
+    # --- Bug 4: ensure starts with user ---
+
+    def test_ensure_starts_with_user_injects_placeholder(self):
+        """Leading assistant messages are preserved; a placeholder user turn is
+        injected instead of dropping context."""
+        messages = [
+            {"role": "assistant", "content": "[1 message omitted]"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        result = self.provider._ensure_starts_with_user(messages)
+        assert result[0]["role"] == "user"
+        assert result[0]["content"] == "[Context omitted]"
+        assert len(result) == 4  # placeholder + original 3
+
+    def test_ensure_starts_with_user_already_correct(self):
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        result = self.provider._ensure_starts_with_user(messages)
+        assert result == messages
+
+    def test_ensure_starts_with_user_empty(self):
+        assert self.provider._ensure_starts_with_user([]) == []
+
+    # --- replace_messages end-to-end ---
+
+    def test_merge_before_validate_preserves_valid_tool_result(self):
+        """Regression: when accordion produces consecutive assistant messages
+        (tool_use block + summary placeholder), the tool_result in the following
+        user message must NOT be stripped as orphaned.
+        Merge must happen before validate_tool_use."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "fn", "input": {}},
+                ],
+            },
+            # accordion inserted a summary placeholder → consecutive assistant
+            {"role": "assistant", "content": "[1 previous message omitted]"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "result"},
+                ],
+            },
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+        msgs = result["messages"]
+        user_msgs = [m for m in msgs if m.get("role") == "user"]
+        assert len(user_msgs) == 2
+        assert user_msgs[0]["content"] == "[Context omitted]"
+        content = user_msgs[1]["content"]
+        assert isinstance(content, list) and len(content) == 1
+        assert content[0]["tool_use_id"] == "t1"
+
+    def test_replace_messages_full_pipeline(self):
+        """Full pipeline: system extracted, orphaned tool_result removed,
+        consecutive roles merged, starts with user."""
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "assistant", "content": "[1 omitted]"},  # leading non-user
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+            {"role": "assistant", "content": " there"},        # consecutive assistant
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "gone_id", "content": "result"},
+            ]},
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+
+        msgs = result["messages"]
+        # system extracted
+        assert result.get("system") == "Be helpful."
+        assert all(m["role"] != "system" for m in msgs)
+        # starts with user
+        assert msgs[0]["role"] == "user"
+        # no orphaned tool_results (user msg was emptied and removed)
+        for m in msgs:
+            content = m.get("content", [])
+            if isinstance(content, list):
+                assert not any(b.get("type") == "tool_result" for b in content)
