@@ -31,7 +31,7 @@ class ProxyServer:
         verbose: Enable verbose logging.
     """
 
-    def __init__(self, port=8080, profile="balanced", target=None, verbose=False):
+    def __init__(self, port=8080, profile="balanced", target=None, verbose=True):
         if web is None:
             raise ImportError(
                 "aiohttp is required for the proxy server. "
@@ -63,6 +63,7 @@ class ProxyServer:
 
         # Detect provider
         provider = detect_provider(request.path, dict(request.headers))
+        logger.debug("[%s] %s → provider=%s", request.method, request.path, provider.name)
 
         # Extract and compress messages
         messages = provider.extract_messages(body)
@@ -94,13 +95,24 @@ class ProxyServer:
         if body.get("stream"):
             return await self._stream(target_url, body, headers, request)
         else:
-            return await self._forward(target_url, body, headers)
+            return await self._forward(target_url, body, headers, provider.name)
 
-    async def _forward(self, url, body, headers):
+    async def _forward(self, url, body, headers, provider_name="unknown"):
         """Forward request and return JSON response."""
         session = await self._get_session()
         async with session.post(url, json=body, headers=headers) as upstream:
             data = await upstream.read()
+            if upstream.status >= 400:
+                try:
+                    err_text = data.decode("utf-8", errors="replace")
+                except Exception:
+                    err_text = "<unreadable>"
+                logger.error(
+                    "[%s] Upstream error %d: %s",
+                    provider_name, upstream.status, err_text[:1000],
+                )
+            else:
+                logger.debug("[%s] Upstream %d OK", provider_name, upstream.status)
             return web.Response(
                 body=data,
                 status=upstream.status,
@@ -125,6 +137,12 @@ class ProxyServer:
             request.method, url, data=raw_body, headers=headers
         ) as upstream:
             data = await upstream.read()
+            if upstream.status >= 400:
+                try:
+                    err_text = data.decode("utf-8", errors="replace")
+                except Exception:
+                    err_text = "<unreadable>"
+                logger.error("Upstream error %d (raw): %s", upstream.status, err_text[:1000])
             return web.Response(
                 body=data,
                 status=upstream.status,
@@ -140,8 +158,18 @@ class ProxyServer:
 
         session = await self._get_session()
         async with session.post(url, json=body, headers=headers) as upstream:
-            async for chunk in upstream.content.iter_any():
-                await response.write(chunk)
+            logger.debug("Stream opened → upstream %d", upstream.status)
+            if upstream.status >= 400:
+                data = await upstream.read()
+                try:
+                    err_text = data.decode("utf-8", errors="replace")
+                except Exception:
+                    err_text = "<unreadable>"
+                logger.error("Upstream stream error %d: %s", upstream.status, err_text[:1000])
+                await response.write(data)
+            else:
+                async for chunk in upstream.content.iter_any():
+                    await response.write(chunk)
 
         await response.write_eof()
         return response
@@ -152,18 +180,21 @@ class ProxyServer:
         before = stats.get("tokens_before", 0)
         pct = (saved / before * 100) if before > 0 else 0
         logger.info(
-            f"[{provider_name}] Compressed: {before} -> {stats.get('tokens_after', 0)} "
-            f"tokens ({pct:.1f}% saved)"
+            "[%s] Compressed: %d → %d tokens (%.1f%% saved)",
+            provider_name, before, stats.get("tokens_after", 0), pct,
         )
         if self.verbose:
-            logger.info(f"  Messages: {stats.get('messages_before')} -> {stats.get('messages_after')}")
+            logger.info(
+                "  Messages: %d → %d",
+                stats.get("messages_before"), stats.get("messages_after"),
+            )
 
-    async def _on_shutdown(self, app):
+    async def _on_shutdown(self, _app):
         """Cleanup on server shutdown."""
         if self._session and not self._session.closed:
             await self._session.close()
         summary = self.stats.summary()
-        logger.info(f"Session summary: {summary}")
+        logger.info("Session summary: %s", summary)
 
     def run(self):
         """Start the proxy server."""
@@ -173,10 +204,10 @@ class ProxyServer:
 
         logging.basicConfig(
             level=logging.DEBUG if self.verbose else logging.INFO,
-            format="%(asctime)s [%(name)s] %(message)s",
+            format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
         )
         logger.info(
-            f"aip-proxy starting on port {self.port} "
-            f"(profile={self.accordion.profile_name}, target={self.target or 'auto'})"
+            "aip-proxy starting on port %d (profile=%s, target=%s)",
+            self.port, self.accordion.profile_name, self.target or "auto",
         )
         web.run_app(app, port=self.port, print=None)

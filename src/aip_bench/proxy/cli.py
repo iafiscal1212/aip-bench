@@ -3,8 +3,9 @@ CLI entry point for aip-proxy.
 
 Usage:
     aip-proxy --port 8080 --profile balanced
-    aip-proxy --port 8080 --profile aggressive --verbose
+    aip-proxy --port 8080 --profile aggressive
     aip-proxy --port 8080 --target http://localhost:11434
+    aip-proxy --port 8080 --no-verbose
 """
 
 import argparse
@@ -35,8 +36,9 @@ def main(argv=None):
     )
     parser.add_argument(
         "--verbose",
-        action="store_true",
-        help="Enable verbose logging",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable verbose/debug logging (default: on, use --no-verbose to disable)",
     )
     args = parser.parse_args(argv)
 

@@ -603,3 +603,164 @@ class TestAnthropicProviderValidation:
         ]
         
         assert filtered_messages == expected_messages
+
+
+# ---------------------------------------------------------------------------
+# AnthropicProvider — new compatibility fixes
+# ---------------------------------------------------------------------------
+
+class TestAnthropicProviderFixes:
+    def setup_method(self):
+        self.provider = AnthropicProvider()
+
+    # --- Bug 1: validation order ---
+
+    def test_validation_order_empties_are_cleaned_after_tool_validation(self):
+        """After _validate_tool_use removes tool_results, the now-empty user
+        message must also be removed. Previously filter_empty ran first so it
+        was a no-op at that point, leaving an empty user message."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    # placeholder injected by accordion — no tool_use IDs
+                    {"type": "text", "text": "[1 previous message omitted]"},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    # This tool_result has no matching tool_use in the preceding msg
+                    {"type": "tool_result", "tool_use_id": "dangling_id", "content": "data"},
+                ],
+            },
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+        # The user message should have been removed entirely
+        user_msgs = [m for m in result["messages"] if m.get("role") == "user"]
+        assert user_msgs == []
+
+    # --- Bug 2: consecutive same-role messages ---
+
+    def test_merge_consecutive_assistant_messages_string(self):
+        messages = [
+            {"role": "assistant", "content": "First part."},
+            {"role": "assistant", "content": "Second part."},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 1
+        assert "First part." in merged[0]["content"]
+        assert "Second part." in merged[0]["content"]
+
+    def test_merge_consecutive_user_messages_list(self):
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "A"}]},
+            {"role": "user", "content": [{"type": "text", "text": "B"}]},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 1
+        assert len(merged[0]["content"]) == 2
+
+    def test_merge_consecutive_mixed_content(self):
+        """String + list should produce a list with a text block prepended."""
+        messages = [
+            {"role": "assistant", "content": "Summary text"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Kept content"}]},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 1
+        content = merged[0]["content"]
+        assert isinstance(content, list)
+        assert any(b.get("text") == "Summary text" for b in content)
+
+    def test_no_merge_for_alternating_roles(self):
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+            {"role": "user", "content": "Bye"},
+        ]
+        merged = self.provider._merge_consecutive_roles(messages)
+        assert len(merged) == 3
+
+    # --- Bug 3: system-role messages in messages array ---
+
+    def test_normalize_system_prompt_extracts_to_top_level(self):
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello"},
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+        assert result["system"] == "You are a helpful assistant."
+        assert all(m["role"] != "system" for m in result["messages"])
+
+    def test_normalize_system_prompt_merges_with_existing_system(self):
+        messages = [
+            {"role": "system", "content": "Extra system context."},
+            {"role": "user", "content": "Hello"},
+        ]
+        body = {"messages": messages, "system": "Original system prompt."}
+        result = self.provider.replace_messages(body, messages)
+        assert "Extra system context." in result["system"]
+        assert "Original system prompt." in result["system"]
+
+    def test_normalize_system_prompt_no_system_messages(self):
+        """If no system-role messages, body['system'] is untouched."""
+        messages = [{"role": "user", "content": "Hi"}]
+        body = {"messages": messages, "system": "Keep me."}
+        result = self.provider.replace_messages(body, messages)
+        assert result["system"] == "Keep me."
+
+    # --- Bug 4: ensure starts with user ---
+
+    def test_ensure_starts_with_user_drops_leading_assistant(self):
+        messages = [
+            {"role": "assistant", "content": "[1 message omitted]"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        result = self.provider._ensure_starts_with_user(messages)
+        assert result[0]["role"] == "user"
+        assert len(result) == 2
+
+    def test_ensure_starts_with_user_already_correct(self):
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        result = self.provider._ensure_starts_with_user(messages)
+        assert result == messages
+
+    def test_ensure_starts_with_user_empty(self):
+        assert self.provider._ensure_starts_with_user([]) == []
+
+    # --- replace_messages end-to-end ---
+
+    def test_replace_messages_full_pipeline(self):
+        """Full pipeline: system extracted, orphaned tool_result removed,
+        consecutive roles merged, starts with user."""
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "assistant", "content": "[1 omitted]"},  # leading non-user
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+            {"role": "assistant", "content": " there"},        # consecutive assistant
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "gone_id", "content": "result"},
+            ]},
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+
+        msgs = result["messages"]
+        # system extracted
+        assert result.get("system") == "Be helpful."
+        assert all(m["role"] != "system" for m in msgs)
+        # starts with user
+        assert msgs[0]["role"] == "user"
+        # no orphaned tool_results (user msg was emptied and removed)
+        for m in msgs:
+            content = m.get("content", [])
+            if isinstance(content, list):
+                assert not any(b.get("type") == "tool_result" for b in content)
