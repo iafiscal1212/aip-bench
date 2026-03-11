@@ -53,19 +53,59 @@ ROLE_WEIGHTS = {"user": 0.3, "assistant": 0.2, "system": 1.0}
 ERROR_KEYWORDS = ["error", "traceback", "failed", "exception", "panic"]
 
 
-def estimate_tokens(messages):
-    """Estimate token count for a list of messages (~4 chars per token)."""
+try:
+    import tiktoken
+    _ENC_CACHE = {}
+except ImportError:
+    tiktoken = None
+
+def get_tokenizer(model_name="gpt-4o"):
+    """Get or cache a tiktoken encoder for a model."""
+    if tiktoken is None:
+        return None
+    if model_name not in _ENC_CACHE:
+        try:
+            # Fallback for unknown models to cl100k_base (standard for gpt-4)
+            _ENC_CACHE[model_name] = tiktoken.encoding_for_model(model_name)
+        except (KeyError, ValueError):
+            _ENC_CACHE[model_name] = tiktoken.get_encoding("cl100k_base")
+    return _ENC_CACHE[model_name]
+
+
+def estimate_tokens(messages, model="gpt-4o"):
+    """Estimate token count for a list of messages.
+    
+    Uses tiktoken for precise counting if available, otherwise falls
+    back to character-based heuristic (~4 chars per token).
+    """
+    enc = get_tokenizer(model)
     total = 0
+    
     for m in messages:
+        role = m.get("role", "")
         content = m.get("content", "")
+        
+        # Format content for counting
+        text = ""
         if isinstance(content, list):
-            # Anthropic content blocks
             text = " ".join(
                 block.get("text", "") for block in content if isinstance(block, dict)
             )
-            total += len(text) // 4
         else:
-            total += len(str(content)) // 4
+            text = str(content)
+            
+        if enc:
+            # Tiktoken is precise
+            # Approximate overhead for message formatting (role + delimiters)
+            total += 4 + len(enc.encode(text))
+        else:
+            # Heuristic fallback
+            total += len(text) // 4
+            
+    # Final conversation overhead (end of sequence)
+    if enc:
+        total += 3
+        
     return max(total, 1)
 
 
@@ -150,10 +190,12 @@ class MessageAccordion:
         if not messages:
             return messages, {"compressed": False, "tokens_before": 0, "tokens_after": 0}
 
+        model = model or "gpt-4o"
+
         # Truncate individual messages first
         messages = self._truncate_messages(messages)
 
-        tokens_before = estimate_tokens(messages)
+        tokens_before = estimate_tokens(messages, model=model)
 
         # Check absolute token threshold
         if tokens_before < self.profile["min_tokens"]:
@@ -174,7 +216,7 @@ class MessageAccordion:
         if not old:
             # Nothing to compress in conversation, but system may have been compressed
             result = system + recent
-            tokens_after = estimate_tokens(result)
+            tokens_after = estimate_tokens(result, model=model)
             if tokens_after < tokens_before:
                 stats = {
                     "compressed": True,
@@ -213,7 +255,7 @@ class MessageAccordion:
 
         # Reconstruct
         result = system + compressed_old + recent
-        tokens_after = estimate_tokens(result)
+        tokens_after = estimate_tokens(result, model=model)
 
         stats = {
             "compressed": True,
