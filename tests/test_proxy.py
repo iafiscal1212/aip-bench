@@ -618,7 +618,9 @@ class TestAnthropicProviderFixes:
     def test_validation_order_empties_are_cleaned_after_tool_validation(self):
         """After _validate_tool_use removes tool_results, the now-empty user
         message must also be removed. Previously filter_empty ran first so it
-        was a no-op at that point, leaving an empty user message."""
+        was a no-op at that point, leaving an empty user message.
+        The leading assistant message causes a placeholder user turn to be
+        injected, so the final messages start with the injected user turn."""
         messages = [
             {
                 "role": "assistant",
@@ -637,9 +639,16 @@ class TestAnthropicProviderFixes:
         ]
         body = {"messages": messages}
         result = self.provider.replace_messages(body, messages)
-        # The user message should have been removed entirely
-        user_msgs = [m for m in result["messages"] if m.get("role") == "user"]
-        assert user_msgs == []
+        msgs = result["messages"]
+        # The dangling tool_result user message was removed (now empty → filtered)
+        # but a placeholder user turn was injected because messages started with assistant
+        assert msgs[0]["role"] == "user"
+        assert msgs[0]["content"] == "[Context omitted]"
+        # No user message with tool_result content remains
+        for m in msgs:
+            content = m.get("content", [])
+            if isinstance(content, list):
+                assert not any(b.get("type") == "tool_result" for b in content)
 
     # --- Bug 2: consecutive same-role messages ---
 
@@ -714,7 +723,9 @@ class TestAnthropicProviderFixes:
 
     # --- Bug 4: ensure starts with user ---
 
-    def test_ensure_starts_with_user_drops_leading_assistant(self):
+    def test_ensure_starts_with_user_injects_placeholder(self):
+        """Leading assistant messages are preserved; a placeholder user turn is
+        injected instead of dropping context."""
         messages = [
             {"role": "assistant", "content": "[1 message omitted]"},
             {"role": "user", "content": "Hello"},
@@ -722,7 +733,8 @@ class TestAnthropicProviderFixes:
         ]
         result = self.provider._ensure_starts_with_user(messages)
         assert result[0]["role"] == "user"
-        assert len(result) == 2
+        assert result[0]["content"] == "[Context omitted]"
+        assert len(result) == 4  # placeholder + original 3
 
     def test_ensure_starts_with_user_already_correct(self):
         messages = [
@@ -736,6 +748,37 @@ class TestAnthropicProviderFixes:
         assert self.provider._ensure_starts_with_user([]) == []
 
     # --- replace_messages end-to-end ---
+
+    def test_merge_before_validate_preserves_valid_tool_result(self):
+        """Regression: when accordion produces consecutive assistant messages
+        (tool_use block + summary placeholder), the tool_result in the following
+        user message must NOT be stripped as orphaned.
+        Merge must happen before validate_tool_use."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "fn", "input": {}},
+                ],
+            },
+            # accordion inserted a summary placeholder → consecutive assistant
+            {"role": "assistant", "content": "[1 previous message omitted]"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "result"},
+                ],
+            },
+        ]
+        body = {"messages": messages}
+        result = self.provider.replace_messages(body, messages)
+        msgs = result["messages"]
+        user_msgs = [m for m in msgs if m.get("role") == "user"]
+        assert len(user_msgs) == 2
+        assert user_msgs[0]["content"] == "[Context omitted]"
+        content = user_msgs[1]["content"]
+        assert isinstance(content, list) and len(content) == 1
+        assert content[0]["tool_use_id"] == "t1"
 
     def test_replace_messages_full_pipeline(self):
         """Full pipeline: system extracted, orphaned tool_result removed,

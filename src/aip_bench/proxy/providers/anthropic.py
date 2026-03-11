@@ -183,22 +183,22 @@ class AnthropicProvider(Provider):
         return blocks_a + blocks_b
 
     def _ensure_starts_with_user(self, messages):
-        """Drop leading messages until the first is role='user'.
+        """Ensure the first message is role='user', as required by Anthropic.
 
-        Anthropic requires the first message to be from the user.
-        Logs a WARNING for every message dropped.
+        Instead of dropping leading assistant messages (losing context), injects
+        a minimal placeholder user turn so the assistant content is preserved.
+        This is the standard approach used by production proxies.
         """
-        dropped = 0
-        while messages and messages[0].get("role") != "user":
-            logger.warning(
-                "Dropping leading %r message to satisfy Anthropic's user-first requirement",
-                messages[0].get("role"),
-            )
-            messages = messages[1:]
-            dropped += 1
-        if dropped:
-            logger.warning("Dropped %d leading message(s) before first user turn", dropped)
-        return messages
+        if not messages or messages[0].get("role") == "user":
+            return messages
+
+        logger.warning(
+            "Conversation starts with role=%r; injecting placeholder user turn "
+            "to satisfy Anthropic's user-first requirement",
+            messages[0].get("role"),
+        )
+        placeholder = {"role": "user", "content": "[Context omitted]"}
+        return [placeholder] + list(messages)
 
     # ------------------------------------------------------------------
     # Provider interface
@@ -216,17 +216,20 @@ class AnthropicProvider(Provider):
         messages, body = self._normalize_system_prompt(messages, body)
         logger.debug("replace_messages: after system normalization → %d messages", len(messages))
 
-        # 2. Remove orphaned tool_results first (Bug 1: was after filter_empty)
+        # 2. Merge consecutive same-role messages first, so that validate_tool_use
+        #    sees the correct predecessor when the accordion split an assistant turn
+        #    (e.g. tool_use block + summary placeholder → one merged message).
+        messages = self._merge_consecutive_roles(messages)
+        logger.debug("replace_messages: after role merge → %d messages", len(messages))
+
+        # 3. Remove orphaned tool_results (must run after merge so consecutive
+        #    assistant turns are already unified before checking tool_use IDs).
         messages = self._validate_tool_use(messages)
         logger.debug("replace_messages: after tool_use validation → %d messages", len(messages))
 
-        # 3. Remove messages emptied by step 2 (Bug 1: was before validate)
+        # 4. Remove user messages emptied by step 3.
         messages = self._filter_empty_user_messages(messages)
         logger.debug("replace_messages: after empty-user filter → %d messages", len(messages))
-
-        # 4. Merge consecutive same-role messages (Bug 2)
-        messages = self._merge_consecutive_roles(messages)
-        logger.debug("replace_messages: after role merge → %d messages", len(messages))
 
         # 5. Ensure conversation starts with a user message (Bug 4)
         messages = self._ensure_starts_with_user(messages)
