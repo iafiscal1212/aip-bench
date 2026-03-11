@@ -8,7 +8,6 @@ import pytest
 
 from aip_bench.proxy.accordion import (
     MessageAccordion,
-    estimate_tokens,
     PROFILES,
     ROLE_WEIGHTS,
 )
@@ -25,6 +24,24 @@ from aip_bench.proxy.stats import CompressionStats
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+class MockProvider:
+    """Simple provider mock for testing token counting."""
+    
+    def count_tokens(self, messages, model=None):
+        """Simple linear token count (~4 chars per token)."""
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                text = " ".join(
+                    str(block.get("text", "")) for block in content if isinstance(block, dict)
+                )
+                total += len(text) // 4
+            else:
+                total += len(str(content)) // 4
+        return max(total, 1)
+
 
 def _make_messages(n, role="user", content_len=100):
     """Generate n messages with given role and approximate content length."""
@@ -44,34 +61,6 @@ def _make_conversation(n_old, n_recent=4, content_len=800):
         role = "user" if i % 2 == 0 else "assistant"
         msgs.append({"role": role, "content": f"Recent message {i}: " + "b" * content_len})
     return msgs
-
-
-# ---------------------------------------------------------------------------
-# estimate_tokens
-# ---------------------------------------------------------------------------
-
-class TestEstimateTokens:
-    def test_basic(self):
-        msgs = [{"role": "user", "content": "Hello world"}]
-        tokens = estimate_tokens(msgs)
-        # ~11 chars / 4 = 2 tokens, minimum 1
-        assert tokens >= 1
-
-    def test_empty_messages(self):
-        # No messages → minimum 1
-        assert estimate_tokens([]) == 1
-
-    def test_long_content(self):
-        msgs = [{"role": "user", "content": "a" * 4000}]
-        tokens = estimate_tokens(msgs)
-        # 4000 / 4 = 1000 tokens
-        assert tokens == 1000
-
-    def test_content_blocks(self):
-        """Anthropic-style content blocks."""
-        msgs = [{"role": "user", "content": [{"text": "Hello " * 100}]}]
-        tokens = estimate_tokens(msgs)
-        assert tokens > 20
 
 
 # ---------------------------------------------------------------------------
@@ -119,13 +108,16 @@ class TestScoreMessage:
 # ---------------------------------------------------------------------------
 
 class TestEvict:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_keeps_recent_window(self):
         """Recent window messages are never touched by compression."""
         accordion = MessageAccordion(profile="balanced")
         # balanced recent_window = 12
         msgs = _make_conversation(n_old=40, n_recent=12)
         # Force compression by using a tiny model context
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         # The last 12 non-system messages should be untouched
         recent_original = msgs[-12:]
         recent_compressed = compressed[-12:]
@@ -135,7 +127,7 @@ class TestEvict:
         """Evict removes messages, reducing token count."""
         accordion = MessageAccordion(profile="balanced")
         msgs = _make_conversation(n_old=40, n_recent=12)
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         assert stats["compressed"] is True
         # Token count should decrease (atoms silently evicted, no markers)
         assert stats["tokens_after"] < stats["tokens_before"]
@@ -144,7 +136,7 @@ class TestEvict:
         """System messages are never removed."""
         accordion = MessageAccordion(profile="balanced")
         msgs = _make_conversation(n_old=40, n_recent=12)
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         system_msgs = [m for m in compressed if m["role"] == "system"]
         assert len(system_msgs) >= 1
         assert system_msgs[0]["content"] == "You are a helpful assistant."
@@ -155,12 +147,15 @@ class TestEvict:
 # ---------------------------------------------------------------------------
 
 class TestMerge:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_merge_reduces_messages(self):
         """Aggressive profile uses merge, silently dropping low-value atoms."""
         accordion = MessageAccordion(profile="aggressive")
         # aggressive recent_window = 6
         msgs = _make_conversation(n_old=30, n_recent=6)
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         assert stats["compressed"] is True
         # Silent eviction: fewer messages, no injected markers
         assert stats["messages_after"] < stats["messages_before"]
@@ -177,6 +172,9 @@ class TestMerge:
 # ---------------------------------------------------------------------------
 
 class TestThreshold:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_no_compress_below_threshold(self):
         """Should not compress when token count is below min_tokens."""
         accordion = MessageAccordion(profile="conservative")
@@ -187,7 +185,7 @@ class TestThreshold:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there"},
         ]
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert stats["compressed"] is False
         assert compressed == msgs
 
@@ -196,12 +194,12 @@ class TestThreshold:
         accordion = MessageAccordion(profile="balanced")
         # balanced min_tokens = 5000 -> need enough tokens
         msgs = [{"role": "system", "content": "System prompt."}]
-        # Need distinct text or much more of it for tiktoken to hit 5k
+        # Need distinct text or much more of it to hit 5k
         for i in range(200):
             role = "user" if i % 2 == 0 else "assistant"
-            # More varied text so it doesn't compress as well in BPE
+            # More varied text
             msgs.append({"role": role, "content": f"Message {i}: " + f"word {i} " * 150})
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert stats["compressed"] is True
         savings_pct = stats["tokens_saved"] / stats["tokens_before"] * 100
         assert savings_pct > 10  # At least 10% savings
@@ -214,7 +212,7 @@ class TestThreshold:
         for i in range(50):
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"Msg {i}: " + f"Unique data {i} " * 100})
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert stats["compressed"] is True
 
 
@@ -333,6 +331,9 @@ class TestCompressionStats:
 # ---------------------------------------------------------------------------
 
 class TestAccordionSession:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_session_accumulates_stats(self):
         """Multiple compress() calls accumulate in shared stats."""
         accordion = MessageAccordion(profile="balanced")
@@ -341,11 +342,11 @@ class TestAccordionSession:
 
         # First large conversation (must exceed threshold for gpt-4)
         msgs1 = _make_conversation(n_old=40, n_recent=12, content_len=800)
-        accordion.compress(msgs1, model="gpt-4")
+        accordion.compress(msgs1, provider=self.provider, model="gpt-4")
 
         # Second large conversation
         msgs2 = _make_conversation(n_old=50, n_recent=12, content_len=800)
-        accordion.compress(msgs2, model="gpt-4")
+        accordion.compress(msgs2, provider=self.provider, model="gpt-4")
 
         summary = stats.summary()
         assert summary["compressions"] == 2
@@ -357,7 +358,7 @@ class TestAccordionSession:
 
     def test_empty_messages(self):
         accordion = MessageAccordion(profile="balanced")
-        compressed, stats = accordion.compress([])
+        compressed, stats = accordion.compress([], provider=self.provider)
         assert compressed == []
         assert stats["compressed"] is False
 
@@ -367,6 +368,9 @@ class TestAccordionSession:
 # ---------------------------------------------------------------------------
 
 class TestContentBlockTruncation:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_truncates_large_tool_result_blocks(self):
         """Anthropic tool_result with large file content gets truncated."""
         accordion = MessageAccordion(profile="aggressive")
@@ -382,7 +386,7 @@ class TestContentBlockTruncation:
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"msg {i}: " + "y" * 400})
 
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         # The tool_result block should have been truncated
         tool_msg = compressed[1]  # after system
         if isinstance(tool_msg["content"], list):
@@ -398,15 +402,14 @@ class TestContentBlockTruncation:
         msgs = [
             {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
         ]
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         assert compressed[0]["content"][0]["text"] == "Hello"
 
 
-# ---------------------------------------------------------------------------
-# System prompt compression
-# ---------------------------------------------------------------------------
-
 class TestSystemCompression:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_large_system_prompt_compressed(self):
         """balanced/aggressive profiles truncate large system prompts."""
         accordion = MessageAccordion(profile="balanced")
@@ -420,7 +423,7 @@ class TestSystemCompression:
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"Msg {i}: " + "z" * 800})
 
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         sys_msg = [m for m in compressed if m["role"] == "system"][0]
         # System content should be shorter than original
         assert len(str(sys_msg["content"])) < len(huge_system)
@@ -434,16 +437,15 @@ class TestSystemCompression:
         for i in range(60):
             role = "user" if i % 2 == 0 else "assistant"
             msgs.append({"role": role, "content": f"Msg {i}: " + "z" * 800})
-        compressed, stats = accordion.compress(msgs)
+        compressed, stats = accordion.compress(msgs, provider=self.provider)
         sys_msg = [m for m in compressed if m["role"] == "system"][0]
         assert sys_msg["content"] == huge_system
 
 
-# ---------------------------------------------------------------------------
-# Merge preserves high-score messages
-# ---------------------------------------------------------------------------
-
 class TestMergeKeepsBest:
+    def setup_method(self):
+        self.provider = MockProvider()
+
     def test_merge_keeps_highest_scoring(self):
         """Merge keeps the best message per chunk, not just first/last."""
         accordion = MessageAccordion(profile="aggressive")
@@ -459,23 +461,10 @@ class TestMergeKeepsBest:
         for i in range(6):
             msgs.append({"role": "user" if i % 2 == 0 else "assistant", "content": "recent " * 50})
 
-        compressed, stats = accordion.compress(msgs, model="gpt-4")
+        compressed, stats = accordion.compress(msgs, provider=self.provider, model="gpt-4")
         # The code+error message should be preserved verbatim
         preserved = [m for m in compressed if "```python" in m.get("content", "") and "error traceback" in m.get("content", "")]
         assert len(preserved) == 1
-
-
-# ---------------------------------------------------------------------------
-# Stdlib fallback server import
-# ---------------------------------------------------------------------------
-
-class TestStdlibFallback:
-    def test_stdlib_server_importable(self):
-        """StdlibProxyServer can be imported without aiohttp."""
-        from aip_bench.proxy.server_stdlib import StdlibProxyServer
-        server = StdlibProxyServer(port=9999, profile="balanced", target="http://localhost:1234")
-        assert server.port == 9999
-        assert server.accordion.profile_name == "balanced"
 
 
 # ---------------------------------------------------------------------------

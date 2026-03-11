@@ -9,7 +9,8 @@ Usage:
 """
 
 import argparse
-import sys
+
+from .server import ProxyServer
 
 
 def main(argv=None):
@@ -42,25 +43,10 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    try:
-        from .server import ProxyServer
-        server = ProxyServer(
-            port=args.port,
-            profile=args.profile,
-            target=args.target,
-            verbose=args.verbose,
-        )
-    except ImportError:
-        print(
-            "aiohttp not found, using stdlib fallback (no SSE streaming).",
-            file=sys.stderr,
-        )
-        from .server_stdlib import StdlibProxyServer
-        server = StdlibProxyServer(
-            port=args.port,
-            profile=args.profile,
-            target=args.target,
-            verbose=args.verbose,
-        )
-
+    server = ProxyServer(
+        port=args.port,
+        profile=args.profile,
+        target=args.target,
+        verbose=args.verbose,
+    )
     server.run()

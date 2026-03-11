@@ -16,7 +16,6 @@ Quick start:
 
 from .accordion import (
     MessageAccordion,
-    estimate_tokens,
     PROFILES,
 )
 from .providers import (
@@ -31,7 +30,6 @@ from .cli import main
 
 __all__ = [
     "MessageAccordion",
-    "estimate_tokens",
     "PROFILES",
     "detect_provider",
     "Provider",

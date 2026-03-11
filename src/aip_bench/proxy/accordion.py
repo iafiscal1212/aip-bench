@@ -39,21 +39,6 @@ ROLE_WEIGHTS = {"user": 0.5, "assistant": 0.2, "system": 1.0}
 ERROR_KEYWORDS = ["error", "traceback", "failed", "exception", "panic"]
 
 
-def estimate_tokens(messages):
-    """Estimate token count for a list of messages (~4 chars per token)."""
-    total = 0
-    for m in messages:
-        content = m.get("content", "")
-        if isinstance(content, list):
-            text = " ".join(
-                str(block.get("text", "")) for block in content if isinstance(block, dict)
-            )
-            total += len(text) // 4
-        else:
-            total += len(str(content)) // 4
-    return max(total, 1)
-
-
 def _jaccard_similarity(text1, text2):
     """Compute token-based Jaccard similarity between two strings."""
     s1 = set(str(text1).lower().split())
@@ -93,25 +78,15 @@ class MessageAccordion:
         self.stats = None  # Set externally or via CompressionStats
 
     # ------------------------------------------------------------------
-    # Token counting helper
-    # ------------------------------------------------------------------
-
-    def _count_tokens(self, messages, provider, model):
-        """Count tokens using provider if available, else estimate."""
-        if provider is not None:
-            return provider.count_tokens(messages, model)
-        return estimate_tokens(messages)
-
-    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def compress(self, messages, provider=None, model=None):
+    def compress(self, messages, provider, model=None):
         """Compress a list of messages according to the active profile.
 
         Args:
             messages: List of message dicts with 'role' and 'content'.
-            provider: Optional provider instance for accurate token counting.
+            provider: Provider instance for token counting.
             model: Optional model name.
 
         Returns:
@@ -125,7 +100,7 @@ class MessageAccordion:
         # 1. Truncate individual messages
         messages = self._truncate_messages(messages, provider, model)
 
-        tokens_before = self._count_tokens(messages, provider, model)
+        tokens_before = provider.count_tokens(messages, model)
 
         # Check absolute token threshold
         if tokens_before < self.profile["min_tokens"]:
@@ -145,7 +120,7 @@ class MessageAccordion:
 
         if not old:
             result = system + recent
-            tokens_after = self._count_tokens(result, provider, model)
+            tokens_after = provider.count_tokens(result, model)
             if tokens_after < tokens_before:
                 stats = self._build_stats(tokens_before, tokens_after, len(messages), len(result))
                 return result, stats
@@ -189,7 +164,7 @@ class MessageAccordion:
 
         # Reconstruct
         result = system + compressed_old + recent
-        tokens_after = self._count_tokens(result, provider, model)
+        tokens_after = provider.count_tokens(result, model)
 
         n_result = len(result)
         stats = self._build_stats(tokens_before, tokens_after, len(messages), n_result)
@@ -349,7 +324,7 @@ class MessageAccordion:
             if m.get("role") == "system":
                 result.append(m)
                 continue
-            tokens = self._count_tokens([m], provider, model)
+            tokens = provider.count_tokens([m], model)
             if tokens > max_tokens:
                 m = dict(m)
                 m["content"] = self._do_truncate(m.get("content", ""), max_tokens)
@@ -388,7 +363,7 @@ class MessageAccordion:
         """Truncate system messages that exceed the budget."""
         result = []
         for m in system_msgs:
-            if self._count_tokens([m], provider, model) > max_tokens:
+            if provider.count_tokens([m], model) > max_tokens:
                 m = dict(m)
                 m["content"] = self._do_truncate(m.get("content", ""), max_tokens)
             result.append(m)

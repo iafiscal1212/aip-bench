@@ -8,11 +8,7 @@ in real-time using the Accordion engine. Supports streaming SSE passthrough.
 import json
 import logging
 
-try:
-    from aiohttp import web, ClientSession
-except ImportError:
-    web = None
-    ClientSession = None
+from aiohttp import web, ClientSession
 
 from .accordion import MessageAccordion
 from .providers import detect_provider
@@ -32,11 +28,6 @@ class ProxyServer:
     """
 
     def __init__(self, port=8080, profile="balanced", target=None, verbose=True):
-        if web is None:
-            raise ImportError(
-                "aiohttp is required for the proxy server. "
-                "Install with: pip install aip-bench[proxy]"
-            )
 
         self.port = port
         self.target = target
