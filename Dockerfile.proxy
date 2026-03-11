@@ -29,14 +29,14 @@ WORKDIR /app
 # Copy dependency files first
 COPY --chown=aipbench:aipbench pyproject.toml poetry.lock* ./
 
-# Install only proxy-related extras
-RUN poetry install --only main --extras proxy --no-root
+# Install core dependencies (includes proxy: aiohttp, tiktoken, etc.)
+RUN poetry install --no-root
 
 # Copy project source
 COPY --chown=aipbench:aipbench . .
 
 # Final project installation
-RUN poetry install --only main --extras proxy
+RUN poetry install
 
 # Switch to non-root user
 USER aipbench

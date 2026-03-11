@@ -24,14 +24,14 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 # Copy only dependency files first to leverage Docker cache
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies (including all extras for the general image)
-RUN poetry install --all-extras --no-root
+# Install dependencies (core + bench + viz)
+RUN poetry install --with bench --with viz --no-root
 
 # Copy project source
 COPY . .
 
 # Install the project itself
-RUN poetry install --all-extras
+RUN poetry install --with bench --with viz
 
 # Default: run tests
 CMD ["poetry", "run", "pytest", "tests/", "-v", "-m", "not slow"]
