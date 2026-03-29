@@ -221,4 +221,4 @@ pytest tests/ -m slow -v            # Slow tests (require torch)
 
 ## License
 
-MIT License - Carmen Esteban, 2025-2026
+Copyright (c) 2024-2026 Carmen Esteban. All rights reserved. No part of this software may be copied, modified, distributed or used without express written permission.
